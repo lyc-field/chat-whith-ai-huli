@@ -74,21 +74,21 @@ class ConversationTile extends StatelessWidget {
                   margin: const EdgeInsets.only(right: 4),
                   decoration: BoxDecoration(
                     color: conversation.mode == 'bookmark'
-                        ? Colors.green.shade100
+                        ? Theme.of(context).colorScheme.primaryContainer
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
                       color: conversation.mode == 'bookmark'
-                          ? Colors.green.shade300
-                          : Colors.grey.shade300,
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outlineVariant,
                     ),
                   ),
                   child: Icon(
                     Icons.flag,
                     size: 18,
                     color: conversation.mode == 'bookmark'
-                        ? Colors.green.shade700
-                        : Colors.grey,
+                        ? Theme.of(context).colorScheme.onPrimaryContainer
+                        : Theme.of(context).colorScheme.outline,
                   ),
                 ),
               ),

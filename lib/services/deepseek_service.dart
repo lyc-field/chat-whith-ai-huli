@@ -74,7 +74,7 @@ class DeepSeekService {
                   onToken(content);
                 }
               }
-            } catch (_) {}
+            } catch (_) { /* skip malformed SSE chunk */ }
           }
         }
       }

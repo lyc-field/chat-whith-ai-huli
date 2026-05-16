@@ -10,6 +10,7 @@ import '../services/database_service.dart';
 import '../services/auth_service.dart';
 import '../services/emotion_service.dart';
 import '../services/context_builder.dart';
+import '../services/json_utils.dart';
 import 'conversation_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
@@ -24,6 +25,7 @@ class ChatProvider extends ChangeNotifier {
   bool _affectionEnabled = true;
   String? _currentConvId;
   String? _systemPrompt;
+  String? _userPersona;
   String _mode = 'summary';
 
   List<Message> _messages = [];
@@ -56,6 +58,7 @@ class ChatProvider extends ChangeNotifier {
   String? get error => _error;
   String? get currentConvId => _currentConvId;
   String? get systemPrompt => _systemPrompt;
+  String? get userPersona => _userPersona;
   String get mode => _mode;
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
@@ -141,10 +144,13 @@ class ChatProvider extends ChangeNotifier {
     _segments = await DatabaseService.getSegmentSummaries(convId);
     final conv = await DatabaseService.getConversation(convId);
     _systemPrompt = conv.systemPrompt;
+    _userPersona = conv.userPersona;
     _mode = conv.mode;
     _error = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
+    _showQuickReplies = false;
+    _quickReplies = [];
 
     // Load or create emotion state, apply decay
     _emotionState = await DatabaseService.getEmotionState(convId);
@@ -183,6 +189,7 @@ class ChatProvider extends ChangeNotifier {
     _isPending = false;
     _error = null;
     _systemPrompt = null;
+    _userPersona = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
     _showQuickReplies = false;
@@ -257,6 +264,24 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setUserPersona(String persona) async {
+    final trimmed = persona.trim();
+    if (trimmed.isEmpty) {
+      _userPersona = null;
+    } else {
+      _userPersona = trimmed;
+    }
+    if (_currentConvId != null) {
+      final conv = await DatabaseService.getConversation(_currentConvId!);
+      final updated = conv.copyWith(
+        userPersona: _userPersona,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateConversation(updated);
+    }
+    notifyListeners();
+  }
+
   Future<void> editMessage(int index, String newContent) async {
     if (index < 0 || index >= _messages.length) return;
     final msg = _messages[index].copyWith(content: newContent.trim());
@@ -289,6 +314,20 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
+
+    // Reset affection and emotion to initial values
+    _affection = 30.0;
+    _previousRawAffection = 30.0;
+    _affectionIncreasing = null;
+    if (_emotionState != null) {
+      _emotionState = EmotionState.createDefault(_currentConvId!, initialAffection: 30.0);
+      await DatabaseService.updateEmotionState(_emotionState!);
+    }
+    // Update conversation affection in DB
+    final conv = await DatabaseService.getConversation(_currentConvId!);
+    final updated = conv.copyWith(affection: 30);
+    await DatabaseService.updateConversation(updated);
+
     notifyListeners();
   }
 
@@ -386,6 +425,7 @@ class ChatProvider extends ChangeNotifier {
       conversationId: _currentConvId!,
       systemPrompt: _systemPrompt,
       conversationPrompt: conv.systemPrompt,
+      userPersona: _userPersona ?? conv.userPersona,
       emotionState: _emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
@@ -406,11 +446,11 @@ class ChatProvider extends ChangeNotifier {
         onToken: (token) {
           _streamingContent += token;
           var display = _streamingContent;
-          // Hide trailing Δ and <QR> tags during streaming
-          int tagStart = display.lastIndexOf('\nΔ');
-          if (tagStart == -1) tagStart = display.lastIndexOf('Δ');
-          if (tagStart != -1) {
-            display = display.substring(0, tagStart).trimRight();
+          // Hide trailing Δ tag during streaming.
+          // Matches Δ±0, Δ+0.2, Δ-0, Δ0 etc. (both ± and ASCII +/-).
+          final deltaMatch = RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
+          if (deltaMatch != null) {
+            display = display.substring(0, deltaMatch.start).trimRight();
           }
           _messages[_messages.length - 1] =
               assistantMsg.copyWith(content: display);
@@ -422,9 +462,9 @@ class ChatProvider extends ChangeNotifier {
 
       // Parse and strip the Δ tag, apply immediately
       var cleanContent = fullContent;
-      final inlineMatch = RegExp(r'Δ\s*([+-]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
+      final inlineMatch = RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
       if (inlineMatch != null) {
-        inlineDelta = (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.3, 0.3);
+        inlineDelta = (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
         inlineReason = inlineMatch.group(2)!.trim();
         cleanContent = cleanContent.replaceFirst(inlineMatch.group(0)!, '').trimRight();
         if (cleanContent.isEmpty) cleanContent = fullContent;
@@ -547,8 +587,8 @@ class ChatProvider extends ChangeNotifier {
       ));
 
       notifyListeners();
-    } catch (_) {
-      // Unconscious LLM call failed — will retry next round
+    } catch (e) {
+      print('[EmotionAnalysis] 潜意识分析失败，下轮重试: $e');
     }
   }
 
@@ -586,25 +626,15 @@ class ChatProvider extends ChangeNotifier {
           _quickReplies = [safe, novel];
         }
       }
-    } catch (_) {
+    } catch (e) {
+      print('[QuickReply] 快捷回复生成失败: $e');
       _quickReplies = [];
       _showQuickReplies = false;
     }
     notifyListeners();
   }
 
-  Map<String, dynamic>? _extractJson(String text) {
-    try {
-      return jsonDecode(text.trim()) as Map<String, dynamic>;
-    } catch (_) {}
-    final match = RegExp(r'\{[^}]+\}').firstMatch(text);
-    if (match != null) {
-      try {
-        return jsonDecode(match.group(0)!) as Map<String, dynamic>;
-      } catch (_) {}
-    }
-    return null;
-  }
+  Map<String, dynamic>? _extractJson(String text) => JsonUtils.extractJson(text);
 
   /// Send a quick reply as user message.
   Future<void> sendQuickReply(String text) async {
@@ -639,6 +669,7 @@ class ChatProvider extends ChangeNotifier {
         conversationId: _currentConvId!,
         systemPrompt: _systemPrompt,
         conversationPrompt: conv.systemPrompt,
+        userPersona: _userPersona ?? conv.userPersona,
         emotionState: _emotionState,
         affectionEnabled: _affectionEnabled,
         mode: _mode,
@@ -653,7 +684,12 @@ class ChatProvider extends ChangeNotifier {
         temperature: temp,
         onToken: (token) {
           _streamingContent += token;
-          _messages[_messages.length - 1] = assistantMsg.copyWith(content: _streamingContent);
+          var display = _streamingContent;
+          final deltaMatch = RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
+          if (deltaMatch != null) {
+            display = display.substring(0, deltaMatch.start).trimRight();
+          }
+          _messages[_messages.length - 1] = assistantMsg.copyWith(content: display);
           notifyListeners();
         },
         onDone: () => _streamingContent = '',
@@ -718,21 +754,32 @@ class ChatProvider extends ChangeNotifier {
 
     _segments.add(summary);
 
-    // Auto-summary: only in summary mode; skip banner entirely in bookmark mode
+    // Summarization: only in summary mode; skip entirely in bookmark mode
     if (_mode == 'bookmark') {
       _showSummaryPrompt = false;
       _pendingSummaryIndex = null;
       return;
     }
 
-    final autoSummary = await AuthService.getAutoSummaryEnabled();
-    if (autoSummary && _service != null) {
+    // Always generate AI summary with persona (diary-style), regardless of auto/manual.
+    if (_service != null) {
       try {
         final archiveText = toArchive
             .map((m) => '${m.role == 'user' ? '用户' : 'AI'}: ${m.content}')
             .join('\n');
-        final prompt = '请用不超过200字总结以下对话要点：\n\n$archiveText';
-        final result = await _service!.chatRaw(prompt, '你是总结助手。只输出一段中文总结，不要解释，不要多余内容。');
+
+        // Build in-character diary-style summary prompt using persona
+        final persona = (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
+            ? _systemPrompt!.trim()
+            : null;
+        final systemPrompt = persona != null
+            ? '$persona\n\n现在，你正在写日记，以第一人称「我」的口吻回顾刚才发生的事。你必须完全保持设定中的性格、语气和说话风格。日记内容要像角色本人写的，不要像第三人称总结。'
+            : '你是总结助手。请用第一人称「我」的口吻回顾以下对话，保持角色的性格和语气。';
+        final userPrompt = persona != null
+            ? '用你的口吻，以第一人称写一段简短的日记（不超过200字），回顾以下对话中发生的事：\n\n$archiveText'
+            : '请用不超过200字的第一人称总结以下对话要点：\n\n$archiveText';
+
+        final result = await _service!.chatRaw(userPrompt, systemPrompt);
         final trimmed = result.trim();
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);
@@ -740,12 +787,18 @@ class ChatProvider extends ChangeNotifier {
           final idx = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
           if (idx != -1) _segments[idx] = updated;
         }
-      } catch (_) {
-        // AI summarization failed — summary stays empty, user can fill manually
+      } catch (e) {
+        print('[Summary] AI 总结生成失败: $e');
       }
+    }
+
+    final autoSummary = await AuthService.getAutoSummaryEnabled();
+    if (autoSummary) {
+      // Auto mode: save silently, no banner
       _showSummaryPrompt = false;
       _pendingSummaryIndex = null;
     } else {
+      // Manual mode: show banner with pre-filled AI content ready for editing
       _showSummaryPrompt = true;
       _pendingSummaryIndex = segmentIndex;
     }

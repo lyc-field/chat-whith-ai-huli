@@ -137,7 +137,10 @@ class HomePage extends StatelessWidget {
               ),
               actions: [
                 TextButton(
-                    onPressed: () => Navigator.pop(outerCtx),
+                    onPressed: () {
+                      resetTimer?.cancel();
+                      Navigator.pop(outerCtx);
+                    },
                     child: const Text('取消')),
                 FilledButton(
                   onPressed: () async {

@@ -6,7 +6,8 @@ import '../providers/chat_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
-import '../widgets/rule_editor_sheet.dart';
+import '../widgets/tone_float_button.dart';
+import 'persona_settings_page.dart';
 import 'summary_management_page.dart';
 import 'affection_log_page.dart';
 import 'emotion_detail_page.dart';
@@ -35,7 +36,6 @@ class _DisplayItem {
 
 class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
-  late final TextEditingController _ruleController;
   bool _initializing = false;
   final Set<int> _expandedSegments = {};
   int? _lastPendingIndex;
@@ -47,7 +47,6 @@ class _ChatPageState extends State<ChatPage> {
   void initState() {
     super.initState();
     final provider = context.read<ChatProvider>();
-    _ruleController = TextEditingController(text: '');
     _title = widget.conversation?.title ?? '新对话';
 
     _mode = widget.conversation?.mode ?? 'summary';
@@ -56,7 +55,6 @@ class _ChatPageState extends State<ChatPage> {
       _initializing = true;
       provider.loadConversation(widget.conversation!.id).then((_) {
         if (mounted) {
-          _ruleController.text = provider.systemPrompt ?? '';
           _mode = provider.mode;
           setState(() => _initializing = false);
         }
@@ -115,16 +113,8 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _showRuleEditor(BuildContext context) {
-    final provider = context.read<ChatProvider>();
-    final initialAffection = provider.affection.clamp(10, 50);
-    showRuleEditorSheet(
-      context,
-      ruleController: _ruleController,
-      affectionSlider: initialAffection,
-      onAffectionSliderChanged: (v) {},
-      quickReplyTone: '正常',
-      onQuickReplyToneChanged: (_) {},
-    );
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const PersonaSettingsPage()));
   }
 
   void _showResetDialog(BuildContext context) {
@@ -195,7 +185,7 @@ class _ChatPageState extends State<ChatPage> {
   List<_DisplayItem> _cachedItems = const [];
 
   List<_DisplayItem> _buildDisplayItems(ChatProvider provider) {
-    final expandedHash = _expandedSegments.length;
+    final expandedHash = Object.hashAll(_expandedSegments);
     // Only recompute when structure changes (not on streaming content updates).
     if (_cachedMsgCount == provider.messages.length &&
         _cachedSegCount == provider.segments.length &&
@@ -245,7 +235,6 @@ class _ChatPageState extends State<ChatPage> {
   void dispose() {
     context.read<ChatProvider>().removeListener(_onProviderChange);
     _scrollController.dispose();
-    _ruleController.dispose();
     super.dispose();
   }
 
@@ -373,18 +362,26 @@ class _ChatPageState extends State<ChatPage> {
         if (provider.showSummaryPrompt && provider.pendingSummaryIndex != null)
           _buildSummaryPromptBanner(provider),
         Expanded(
-          child: _initializing
-              ? const Center(child: CircularProgressIndicator())
-              : provider.messages.isEmpty
-                  ? Center(
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.forum_outlined, size: 64,
-                            color: Theme.of(context).colorScheme.outline),
-                        const SizedBox(height: 16),
-                        Text('开始新对话',
-                            style: Theme.of(context).textTheme.bodyLarge),
-                      ]))
-                  : _buildMessageList(provider),
+          child: Stack(
+            children: [
+              if (_initializing)
+                const Center(child: CircularProgressIndicator())
+              else if (provider.messages.isEmpty)
+                Center(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.forum_outlined, size: 64,
+                      color: Theme.of(context).colorScheme.outline),
+                  const SizedBox(height: 16),
+                  Text('开始新对话',
+                      style: Theme.of(context).textTheme.bodyLarge),
+                ]))
+              else
+                _buildMessageList(provider),
+              // Draggable tone float button
+              if (provider.currentConvId != null)
+                const ToneFloatButton(),
+            ],
+          ),
         ),
         // Quick reply bar
         if (provider.showQuickReplies &&
@@ -413,8 +410,8 @@ class _ChatPageState extends State<ChatPage> {
           child: _quickReplyBtn(
             icon: Icons.shield_outlined,
             label: provider.quickReplies[0],
-            color: Colors.grey.shade700,
-            bgColor: Colors.grey.shade100,
+            color: theme.colorScheme.onSurfaceVariant,
+            bgColor: theme.colorScheme.surfaceVariant,
             onTap: () => provider.sendQuickReply(provider.quickReplies[0]),
           ),
         ),
@@ -424,8 +421,8 @@ class _ChatPageState extends State<ChatPage> {
           child: _quickReplyBtn(
             icon: Icons.auto_awesome,
             label: provider.quickReplies[1],
-            color: Colors.blue.shade700,
-            bgColor: Colors.blue.shade50,
+            color: theme.colorScheme.onSecondaryContainer,
+            bgColor: theme.colorScheme.secondaryContainer,
             onTap: () => provider.sendQuickReply(provider.quickReplies[1]),
           ),
         ),
@@ -721,7 +718,7 @@ class _ChatPageState extends State<ChatPage> {
                 maxLines: 10,
                 minLines: 4,
                 decoration: const InputDecoration(
-                  hintText: '写一个简短的总结，帮助 AI 记住这段对话的要点...',
+                  hintText: '角色会以写日记的方式自动总结…你可以修改',
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),

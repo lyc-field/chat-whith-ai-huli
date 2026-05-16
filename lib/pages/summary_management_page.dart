@@ -46,7 +46,7 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
               // Auto-summary toggle
               SwitchListTile(
                 title: const Text('AI 自动总结'),
-                subtitle: const Text('归档时自动总结对话，无需手动填写'),
+                subtitle: const Text('归档时 AI 自动以角色口吻写日记式总结，关闭则弹出提示供你修改'),
                 value: _autoSummary,
                 onChanged: (v) async {
                   await AuthService.setAutoSummaryEnabled(v);
@@ -93,7 +93,7 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
           TextField(
             controller: controller, maxLines: 8, minLines: 3,
             decoration: InputDecoration(
-              hintText: isEmpty ? '暂无总结，点击编辑...' : '编辑总结...',
+              hintText: isEmpty ? '暂无日记，等待 AI 自动生成...' : '角色写的日记（可修改）...',
               border: const OutlineInputBorder(),
               filled: true,
               fillColor: theme.colorScheme.surfaceVariant.withOpacity(0.3),

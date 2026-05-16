@@ -1,6 +1,7 @@
 import 'dart:convert';
 import '../models/emotion_state.dart';
 import 'deepseek_service.dart';
+import 'json_utils.dart';
 
 /// Emotion lookup tables ported from emotion_tables.py
 class EmotionTables {
@@ -227,17 +228,7 @@ $historySnippet
   }
 
   Map<String, dynamic> _parseJson(String text) {
-    try {
-      return jsonDecode(text.trim()) as Map<String, dynamic>;
-    } catch (_) {
-      final match = RegExp(r'\{.*\}', dotAll: true).firstMatch(text);
-      if (match != null) {
-        try {
-          return jsonDecode(match.group(0)!) as Map<String, dynamic>;
-        } catch (_) {}
-      }
-    }
-    return _defaultResponse();
+    return JsonUtils.extractJson(text) ?? _defaultResponse();
   }
 
   Map<String, dynamic> _clampDeltas(Map<String, dynamic> data, int turnCount) {
@@ -305,7 +296,8 @@ $historySnippet
       final deltas = _parseJson(response);
       final clamped = _clampDeltas(deltas, state.turnCount);
       return _ensureNonZero(clamped, state);
-    } catch (_) {
+    } catch (e) {
+      print('[EmotionService] 情感分析失败，使用默认值: $e');
       return _defaultResponse();
     }
   }

@@ -11,19 +11,18 @@ import '../services/auth_service.dart';
 void showRuleEditorSheet(
   BuildContext context, {
   required TextEditingController ruleController,
-  required int affectionSlider,
-  required void Function(int) onAffectionSliderChanged,
-  required String quickReplyTone,
-  required void Function(String) onQuickReplyToneChanged,
 }) {
   final provider = context.read<ChatProvider>();
-  final initialAffection = affectionSlider;
-  String currentTone = quickReplyTone;
+  int affValue = provider.affection.clamp(10, 50);
+  String currentTone = '正常';
   String? globalRules;
   bool showRules = false;
 
-  // Load global rules.
+  // Load saved preferences.
   AuthService.getGlobalPrompt().then((p) => globalRules = p);
+  AuthService.getQuickReplyTone().then((t) {
+    if (t != '正常') currentTone = t;
+  });
 
   showModalBottomSheet(
     context: context,
@@ -122,10 +121,7 @@ void showRuleEditorSheet(
                             fontSize: 12,
                             color: selected ? Colors.white : null)),
                         selected: selected,
-                        onSelected: (_) => setSheetState(() {
-                          currentTone = t;
-                          onQuickReplyToneChanged(t);
-                        }),
+                        onSelected: (_) => setSheetState(() => currentTone = t),
                         visualDensity: VisualDensity.compact,
                       ),
                     );
@@ -135,7 +131,7 @@ void showRuleEditorSheet(
                 // Import JSON persona
                 OutlinedButton.icon(
                   onPressed: () => _importPersona(context, ctx, setSheetState,
-                      ruleController, initialAffection, onAffectionSliderChanged),
+                      ruleController, (v) => affValue = v),
                   icon: const Icon(Icons.file_open, size: 16),
                   label: const Text('导入 JSON 人设'),
                 ),
@@ -164,20 +160,18 @@ void showRuleEditorSheet(
                     Row(children: [
                       Expanded(
                         child: Slider(
-                          value: initialAffection.toDouble(),
+                          value: affValue.toDouble(),
                           min: 10,
                           max: 50,
                           divisions: 40,
-                          label: '$initialAffection',
-                          onChanged: (v) {
-                            onAffectionSliderChanged(v.round());
-                            setSheetState(() {});
-                          },
+                          label: '$affValue',
+                          onChanged: (v) =>
+                              setSheetState(() => affValue = v.round()),
                         ),
                       ),
                       SizedBox(
                         width: 40,
-                        child: Text('$initialAffection',
+                        child: Text('$affValue',
                             style: Theme.of(ctx).textTheme.bodySmall),
                       ),
                     ]),
@@ -197,7 +191,7 @@ void showRuleEditorSheet(
                 FilledButton.icon(
                   onPressed: () {
                     if (provider.systemPrompt == null || provider.systemPrompt!.isEmpty) {
-                      provider.setInitialAffection(initialAffection);
+                      provider.setInitialAffection(affValue);
                     }
                     AuthService.setQuickReplyTone(currentTone);
                     provider.setSystemPrompt(ruleController.text);
@@ -223,8 +217,7 @@ Future<void> _importPersona(
   BuildContext sheetCtx,
   void Function(void Function()) setSheetState,
   TextEditingController ruleController,
-  int initialAffection,
-  void Function(int) onAffectionSliderChanged,
+  void Function(int) onAffectionChanged,
 ) async {
   final result = await FilePicker.platform.pickFiles(
     type: FileType.custom,
@@ -284,17 +277,17 @@ Future<void> _importPersona(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('人设内容预览：',
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text('人设内容预览：',
+                  style: TextStyle(fontSize: 12, color: Theme.of(ctx).colorScheme.outline)),
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
                 constraints: const BoxConstraints(maxHeight: 200),
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
+                  color: Theme.of(ctx).colorScheme.surfaceVariant,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: Theme.of(ctx).colorScheme.outlineVariant),
                 ),
                 child: SingleChildScrollView(
                   child: Text(persona.isNotEmpty ? persona : '(空)',
@@ -319,7 +312,7 @@ Future<void> _importPersona(
     if (confirmed == true) {
       setSheetState(() {
         if (persona.isNotEmpty) ruleController.text = persona;
-        if (aff != null) onAffectionSliderChanged(aff.clamp(10, 50));
+        if (aff != null) onAffectionChanged(aff.clamp(10, 50));
       });
     }
   } catch (_) {

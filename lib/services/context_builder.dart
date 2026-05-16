@@ -19,6 +19,7 @@ class ContextBuilder {
     required String conversationId,
     required String? systemPrompt,
     required String? conversationPrompt,
+    required String? userPersona,
     required EmotionState? emotionState,
     required bool affectionEnabled,
     required String mode,
@@ -39,6 +40,11 @@ class ContextBuilder {
       final sb = StringBuffer();
       if (hasUser) {
         sb.writeln(sPrompt.trim());
+      }
+      if (userPersona != null && userPersona.trim().isNotEmpty) {
+        sb.writeln();
+        sb.writeln('【你正在对话的对象】');
+        sb.writeln(userPersona.trim());
       }
       if (affectionEnabled && emotionState != null) {
         _appendEmotionPanel(sb, emotionState);
@@ -128,7 +134,7 @@ class ContextBuilder {
     for (int i = contextMsgs.length - 1; i >= 0; i--) {
       if (contextMsgs[i]['role'] == 'user') {
         contextMsgs[i]['content'] =
-            '${contextMsgs[i]['content']}\n\n[回复末尾附加好感度标记：Δ±数字 原因（范围-0.3~+0.3，示例：Δ+0.2 用户的关心让我感到温暖，必须执行）]';
+            '${contextMsgs[i]['content']}\n\n[回复末尾附加好感度标记：Δ±数字 原因（范围-0.5~+0.8，示例：Δ+0.3 用户的关心让我感到温暖，必须执行）]';
         break;
       }
     }

@@ -23,7 +23,7 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 9,
+        version: 10,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -31,7 +31,7 @@ class DatabaseService {
       try { await deleteDatabase(path); } catch (_) {
         try { await File(path).delete(); } catch (_) {}
       }
-      return await openDatabase(path, version: 9, onCreate: _onCreate);
+      return await openDatabase(path, version: 10, onCreate: _onCreate);
     }
   }
 
@@ -43,6 +43,7 @@ class DatabaseService {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         system_prompt TEXT,
+        user_persona TEXT,
         affection INTEGER NOT NULL DEFAULT 30,
         mode TEXT NOT NULL DEFAULT 'summary'
       )
@@ -207,6 +208,9 @@ class DatabaseService {
     if (oldVersion < 9) {
       try { await db.execute("ALTER TABLE messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
       try { await db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'summary'"); } catch (_) {}
+    }
+    if (oldVersion < 10) {
+      try { await db.execute("ALTER TABLE conversations ADD COLUMN user_persona TEXT"); } catch (_) {}
     }
   }
 

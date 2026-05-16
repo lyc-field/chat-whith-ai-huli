@@ -28,7 +28,6 @@ class EmotionGrid extends StatelessWidget {
     this.compact = false,
   });
 
-  /// Factory for the "towards user" grid.
   factory EmotionGrid.towardsUser({
     required EmotionState state,
     double? affectionOverride,
@@ -57,7 +56,6 @@ class EmotionGrid extends StatelessWidget {
     );
   }
 
-  /// Factory for the "self" grid.
   factory EmotionGrid.self({
     required EmotionState state,
     double? libidoSelfOverride,
@@ -85,6 +83,7 @@ class EmotionGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final cellW = compact ? 52.0 : 64.0;
     final cellH = compact ? 28.0 : 36.0;
     final fontSize = compact ? 9.0 : 10.0;
@@ -93,22 +92,20 @@ class EmotionGrid extends StatelessWidget {
 
     Widget gridWidget = Column(
       children: [
-        // X bracket header
         Row(children: [
           SizedBox(width: yLabelWidth),
           ...xBrackets.map((b) => SizedBox(
             width: cellW,
             child: Center(child: Text(b,
-                style: TextStyle(fontSize: bracketFontSize, color: Colors.grey))),
+                style: TextStyle(fontSize: bracketFontSize, color: theme.colorScheme.outline))),
           )),
         ]),
-        // Data rows
         ...List.generate(grid.length, (r) => Row(
           children: [
             SizedBox(
               width: yLabelWidth,
               child: Center(child: Text(yBrackets[r],
-                  style: TextStyle(fontSize: bracketFontSize, color: Colors.grey))),
+                  style: TextStyle(fontSize: bracketFontSize, color: theme.colorScheme.outline))),
             ),
             ...List.generate(grid[r].length, (c) {
               final isCurrent = r == highlightRow && c == highlightCol;
@@ -116,9 +113,13 @@ class EmotionGrid extends StatelessWidget {
                 width: cellW, height: cellH,
                 margin: const EdgeInsets.all(0.5),
                 decoration: BoxDecoration(
-                  color: isCurrent ? Colors.green.shade100 : Colors.white,
+                  color: isCurrent
+                      ? theme.colorScheme.primaryContainer
+                      : theme.colorScheme.surface,
                   border: Border.all(
-                    color: isCurrent ? Colors.green : Colors.grey.shade300,
+                    color: isCurrent
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outlineVariant,
                     width: isCurrent ? 1.5 : 0.5,
                   ),
                   borderRadius: BorderRadius.circular(compact ? 2.0 : 3.0),
@@ -128,6 +129,9 @@ class EmotionGrid extends StatelessWidget {
                     style: TextStyle(
                       fontSize: fontSize,
                       fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                      color: isCurrent
+                          ? theme.colorScheme.onPrimaryContainer
+                          : theme.colorScheme.onSurface,
                     ),
                     textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis),
@@ -138,7 +142,6 @@ class EmotionGrid extends StatelessWidget {
       ],
     );
 
-    // Wrap in horizontal scroll
     final scrollable = SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: gridWidget,
@@ -158,11 +161,10 @@ class EmotionGrid extends StatelessWidget {
       return scrollable;
     }
 
-    // Full-size layout with axis labels
     Widget body = Column(children: [
       if (xLabel != null)
         Center(child: Text(xLabel!,
-            style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.outline))),
+            style: TextStyle(fontSize: 10, color: theme.colorScheme.outline))),
       if (xLabel != null) const SizedBox(height: 4),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -171,7 +173,7 @@ class EmotionGrid extends StatelessWidget {
             SizedBox(
               width: 20,
               child: Text(yLabel!,
-                  style: TextStyle(fontSize: 9, color: Theme.of(context).colorScheme.outline),
+                  style: TextStyle(fontSize: 9, color: theme.colorScheme.outline),
                   textAlign: TextAlign.center),
             ),
           if (yLabel != null) const SizedBox(width: 4),

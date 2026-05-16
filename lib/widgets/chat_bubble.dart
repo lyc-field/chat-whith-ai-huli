@@ -82,7 +82,7 @@ class ChatBubble extends StatelessWidget {
                     message.isBookmarked ? Icons.flag : Icons.flag_outlined,
                     size: 18,
                     color: message.isBookmarked
-                        ? Colors.green.shade600
+                        ? theme.colorScheme.primary
                         : theme.colorScheme.outline,
                   ),
                 ),
