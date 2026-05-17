@@ -34,21 +34,29 @@ class ChatBubble extends StatelessWidget {
         children: [
           Container(
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.8,
+              maxWidth: MediaQuery.of(context).size.width * 0.78,
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: archived
                   ? theme.colorScheme.surfaceVariant.withOpacity(0.4)
                   : isUser
-                      ? theme.colorScheme.primaryContainer
+                      ? theme.colorScheme.primaryContainer.withOpacity(0.8)
                       : theme.colorScheme.surfaceVariant,
               borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(isUser ? 16 : 4),
-                bottomRight: Radius.circular(isUser ? 4 : 16),
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isUser ? 18 : 6),
+                bottomRight: Radius.circular(isUser ? 6 : 18),
               ),
+              boxShadow: isEmpty ? null : [
+                BoxShadow(
+                  color: (isUser ? theme.colorScheme.primary : theme.colorScheme.onSurface)
+                      .withOpacity(0.04),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
             ),
             child: isEmpty
                 ? const SizedBox(width: 20, height: 20,
@@ -57,55 +65,51 @@ class ChatBubble extends StatelessWidget {
                     message.content,
                     style: TextStyle(
                       fontSize: archived ? 13 : 15,
+                      height: 1.5,
                       color: archived
                           ? theme.colorScheme.onSurface.withOpacity(0.45)
                           : isUser
                               ? theme.colorScheme.onPrimaryContainer
-                              : theme.colorScheme.onSurfaceVariant,
+                              : theme.colorScheme.onSurface,
                     ),
                   ),
           ),
           if (showTimestamp && !isEmpty) ...[
-            const SizedBox(height: 2),
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              GestureDetector(
-                onTap: onToggleBookmark,
-                child: Text(DateFormat('HH:mm').format(message.timestamp),
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: theme.colorScheme.outline)),
-              ),
-              if (onToggleBookmark != null) ...[
-                const SizedBox(width: 6),
+            const SizedBox(height: 3),
+            Padding(
+              padding: EdgeInsets.only(left: isUser ? 0 : 16, right: isUser ? 16 : 0),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
                 GestureDetector(
                   onTap: onToggleBookmark,
-                  child: Icon(
-                    message.isBookmarked ? Icons.flag : Icons.flag_outlined,
-                    size: 18,
-                    color: message.isBookmarked
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.outline,
-                  ),
+                  child: Text(DateFormat('HH:mm').format(message.timestamp),
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: theme.colorScheme.outline)),
                 ),
-                const SizedBox(width: 6),
-              ],
-              _ActionButton(
-                icon: Icons.copy, tooltip: '复制',
-                onTap: () {
+                if (onToggleBookmark != null) ...[
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: onToggleBookmark,
+                    child: Icon(
+                      message.isBookmarked ? Icons.flag : Icons.flag_outlined,
+                      size: 16,
+                      color: message.isBookmarked
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.outline,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                _ActionButton(icon: Icons.copy, tooltip: '复制', onTap: () {
                   Clipboard.setData(ClipboardData(text: message.content));
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('已复制到剪贴板'), duration: Duration(seconds: 1)),
-                  );
-                },
-              ),
-              _ActionButton(
-                icon: Icons.edit, tooltip: '编辑',
-                onTap: () => _showEditDialog(context),
-              ),
-              _ActionButton(
-                icon: Icons.delete_outline, tooltip: '删除',
-                onTap: () => _showDeleteDialog(context),
-              ),
-            ]),
+                    const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)));
+                }),
+                _ActionButton(icon: Icons.edit_outlined, tooltip: '编辑',
+                    onTap: () => _showEditDialog(context)),
+                _ActionButton(icon: Icons.delete_outline, tooltip: '删除',
+                    onTap: () => _showDeleteDialog(context)),
+              ]),
+            ),
           ],
         ],
       ),
@@ -166,11 +170,11 @@ class _ActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.all(3),
         child: Icon(icon, size: 14,
-            color: Theme.of(context).colorScheme.outline),
+            color: Theme.of(context).colorScheme.outline.withOpacity(0.6)),
       ),
     );
   }

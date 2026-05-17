@@ -54,6 +54,8 @@ APP_CONTEXT.md
 # Claude Code local settings
 .claude/settings.local.json
 skills-lock.json
+.agents/
+.claude/skills/
 
 # Unrelated test project
 test_blank/

@@ -15,14 +15,16 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('小狐爱说话'),
+        title: const Text('小狐爱说话', style: TextStyle(fontWeight: FontWeight.w700)),
         centerTitle: true,
+        scrolledUnderElevation: 1,
         actions: [
           IconButton(
-            icon: const Icon(Icons.key_rounded),
-            tooltip: '设置 API Key',
+            icon: const Icon(Icons.tune),
+            tooltip: 'API 设置',
             onPressed: () => _showApiKeyDialog(context),
           ),
         ],
@@ -34,18 +36,30 @@ class HomePage extends StatelessWidget {
           }
           if (convProvider.conversations.isEmpty) {
             return Center(
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.chat_outlined, size: 64,
-                    color: Theme.of(context).colorScheme.outline),
-                const SizedBox(height: 16),
-                Text('没有对话记录', style: Theme.of(context).textTheme.bodyLarge),
-                const SizedBox(height: 8),
-                const Text('点击右下角按钮开始新对话'),
-              ]),
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    width: 88, height: 88,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Icon(Icons.chat_bubble_outline_rounded, size: 40,
+                        color: theme.colorScheme.primary),
+                  ),
+                  const SizedBox(height: 24),
+                  Text('开始你的故事',
+                      style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Text('点击下方按钮，创建新对话',
+                      style: TextStyle(fontSize: 14, color: theme.colorScheme.outline)),
+                ]),
+              ),
             );
           }
           return ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 88),
             itemCount: convProvider.conversations.length,
             itemBuilder: (_, i) {
               final conv = convProvider.conversations[i];
@@ -75,9 +89,10 @@ class HomePage extends StatelessWidget {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openChat(context, null),
-        child: const Icon(Icons.add_comment_rounded),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('新对话'),
       ),
     );
   }
@@ -157,7 +172,6 @@ class HomePage extends StatelessWidget {
                         );
                       }
                     } else {
-                      // Hidden trigger: 6 taps on "确定" with empty key within 3s
                       tapCount++;
                       if (tapCount >= 6) {
                         Navigator.pop(outerCtx);

@@ -40,17 +40,14 @@ class _MessageInputState extends State<MessageInput> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Theme.of(context).colorScheme.shadow.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, -1),
-          ),
-        ],
+        color: theme.colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.3)),
+        ),
       ),
       child: SafeArea(
         child: Row(
@@ -63,28 +60,32 @@ class _MessageInputState extends State<MessageInput> {
                 minLines: 1,
                 maxLines: 5,
                 textInputAction: TextInputAction.newline,
+                style: TextStyle(fontSize: 15, color: theme.colorScheme.onSurface),
                 decoration: InputDecoration(
-                  hintText: '输入消息...',
+                  hintText: '说点什么...',
+                  hintStyle: TextStyle(color: theme.colorScheme.outline.withOpacity(0.6)),
                   filled: true,
-                  fillColor: Theme.of(context)
-                      .colorScheme
-                      .surfaceVariant
-                      .withOpacity(0.5),
+                  fillColor: theme.colorScheme.surfaceVariant.withOpacity(0.6),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(28),
                     borderSide: BorderSide.none,
                   ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                 ),
               ),
             ),
             const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: _hasText && widget.enabled ? _send : null,
-              icon: const Icon(Icons.send_rounded),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              child: IconButton.filled(
+                onPressed: _hasText && widget.enabled ? _send : null,
+                icon: const Icon(Icons.send_rounded, size: 20),
+                style: IconButton.styleFrom(
+                  backgroundColor: _hasText
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.surfaceVariant,
+                ),
+              ),
             ),
           ],
         ),
