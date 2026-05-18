@@ -18,6 +18,7 @@ class PersonaSettingsPage extends StatefulWidget {
 class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   late final TextEditingController _aiController;
   late final TextEditingController _userController;
+  late final TextEditingController _worldBackgroundController;
   int _affectionSlider = 30;
   String? _globalRules;
   bool _showGlobalRules = false;
@@ -28,6 +29,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     final provider = context.read<ChatProvider>();
     _aiController = TextEditingController(text: provider.systemPrompt ?? '');
     _userController = TextEditingController(text: provider.userPersona ?? '');
+    _worldBackgroundController =
+        TextEditingController(text: provider.worldBackground ?? '');
     _affectionSlider = provider.affection.clamp(-15, 50);
     _loadPrefs();
   }
@@ -53,6 +56,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
       var persona = json['persona'] as String? ?? '';
       var userPersona = json['user_persona'] as String?;
+      var worldBackground = json['world_background'] as String?;
       var name = json['name'] as String?;
       var aff = json['initial_affection'] as int?;
       if (persona.isEmpty) {
@@ -88,8 +92,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           title: Row(children: [
             const Icon(Icons.check_circle, color: Colors.green, size: 22),
             const SizedBox(width: 8),
-            Expanded(child: Text(name != null ? '导入「$name」' : '导入成功',
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
+            Expanded(
+                child: Text(name != null ? '导入「$name」' : '导入成功',
+                    maxLines: 1, overflow: TextOverflow.ellipsis)),
           ]),
           content: SizedBox(
             width: double.maxFinite,
@@ -107,7 +112,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                   decoration: BoxDecoration(
                     color: Theme.of(ctx).colorScheme.surfaceVariant,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Theme.of(ctx).colorScheme.outlineVariant),
+                    border: Border.all(
+                        color: Theme.of(ctx).colorScheme.outlineVariant),
                   ),
                   child: SingleChildScrollView(
                     child: Text(persona.isNotEmpty ? persona : '(空)',
@@ -132,7 +138,10 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       if (confirmed == true) {
         setState(() {
           if (persona.isNotEmpty) _aiController.text = persona;
-          if (userPersona != null && userPersona.isNotEmpty) _userController.text = userPersona;
+          if (userPersona != null && userPersona.isNotEmpty)
+            _userController.text = userPersona;
+          if (worldBackground != null && worldBackground.isNotEmpty)
+            _worldBackgroundController.text = worldBackground;
           if (aff != null) _affectionSlider = aff.clamp(-15, 50);
         });
       }
@@ -166,6 +175,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     }
     await provider.setSystemPrompt(_aiController.text);
     await provider.setUserPersona(_userController.text);
+    await provider.setWorldBackground(_worldBackgroundController.text);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('设定已保存'), duration: Duration(seconds: 1)),
@@ -178,6 +188,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   void dispose() {
     _aiController.dispose();
     _userController.dispose();
+    _worldBackgroundController.dispose();
     super.dispose();
   }
 
@@ -233,8 +244,26 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           ),
           const SizedBox(height: 24),
 
+          // ── 世界背景 ──
+          Text('世界背景', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text('描述故事发生的世界设定，例如环境、规则、时代等',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _worldBackgroundController,
+            maxLines: 4,
+            minLines: 2,
+            decoration: const InputDecoration(
+              hintText: '例如：在一个充满魔法与蒸汽机械的大陆上…\n留空则不注入',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // ── 初始好感度 ──
-          if (provider.systemPrompt == null || provider.systemPrompt!.isEmpty) ...[
+          if (provider.systemPrompt == null ||
+              provider.systemPrompt!.isEmpty) ...[
             if (provider.affectionEnabled) ...[
               Text('初始好感度', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),
@@ -242,13 +271,18 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                 Expanded(
                   child: Slider(
                     value: _affectionSlider.toDouble(),
-                    min: -15, max: 50, divisions: 65,
+                    min: -15,
+                    max: 50,
+                    divisions: 65,
                     label: '$_affectionSlider',
-                    onChanged: (v) => setState(() => _affectionSlider = v.round()),
+                    onChanged: (v) =>
+                        setState(() => _affectionSlider = v.round()),
                   ),
                 ),
-                SizedBox(width: 40, child: Text('$_affectionSlider',
-                    style: theme.textTheme.bodySmall)),
+                SizedBox(
+                    width: 40,
+                    child: Text('$_affectionSlider',
+                        style: theme.textTheme.bodySmall)),
               ]),
             ],
           ] else ...[
@@ -272,14 +306,15 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
             InkWell(
               onTap: () => setState(() => _showGlobalRules = !_showGlobalRules),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.tertiaryContainer.withOpacity(0.4),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(children: [
-                  Icon(Icons.gpp_maybe, size: 18,
-                      color: theme.colorScheme.tertiary),
+                  Icon(Icons.gpp_maybe,
+                      size: 18, color: theme.colorScheme.tertiary),
                   const SizedBox(width: 8),
                   Text('管理员安全规则',
                       style: TextStyle(color: theme.colorScheme.tertiary)),
@@ -298,10 +333,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                   color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Text(_globalRules!, style: TextStyle(
-                    fontSize: 13,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 1.5)),
+                child: Text(_globalRules!,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurfaceVariant,
+                        height: 1.5)),
               ),
             ],
           ],

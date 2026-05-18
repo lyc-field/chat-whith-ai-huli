@@ -28,44 +28,122 @@ class ChatApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFFFF6B35), // warm orange — fox theme
+            seedColor:
+                const Color(0xFFFA8072), // Elegant soft coral/salmon fox theme
+            primary: const Color(0xFFFA8072),
+            secondary: const Color(0xFF7CB342),
+            background: const Color(0xFFFFF9F5),
+            surface: Colors.white,
             brightness: Brightness.light,
           ),
           useMaterial3: true,
-          cardTheme: CardTheme(
+          scaffoldBackgroundColor: const Color(0xFFFFF9F5),
+          appBarTheme: const AppBarTheme(
             elevation: 0,
+            centerTitle: true,
+            backgroundColor: Color(0xFFFFF9F5),
+            surfaceTintColor: Colors.transparent,
+            titleTextStyle: TextStyle(
+              color: Color(0xFF333333),
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+            iconTheme: IconThemeData(color: Color(0xFF333333)),
+          ),
+          cardTheme: CardTheme(
+            elevation: 2,
+            shadowColor: const Color(0xFFFA8072).withOpacity(0.2),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(20),
             ),
           ),
           inputDecorationTheme: InputDecorationTheme(
             filled: true,
-            fillColor: Colors.transparent,
+            fillColor: Colors.white,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(24),
+              borderSide: BorderSide.none,
             ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24),
+              borderSide: BorderSide(color: Colors.grey.withOpacity(0.1)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24),
+              borderSide:
+                  const BorderSide(color: Color(0xFFFA8072), width: 1.5),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          ),
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: ElevatedButton.styleFrom(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
           ),
         ),
         darkTheme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFFFF6B35),
+            seedColor: const Color(0xFFFA8072),
+            primary: const Color(0xFFFA8072),
+            secondary: const Color(0xFF7CB342),
+            background: const Color(0xFF1A1A1A),
+            surface: const Color(0xFF242424),
             brightness: Brightness.dark,
           ),
           useMaterial3: true,
-          cardTheme: CardTheme(
+          scaffoldBackgroundColor: const Color(0xFF1A1A1A),
+          appBarTheme: const AppBarTheme(
             elevation: 0,
+            centerTitle: true,
+            backgroundColor: Color(0xFF1A1A1A),
+            surfaceTintColor: Colors.transparent,
+            titleTextStyle: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+            iconTheme: IconThemeData(color: Colors.white),
+          ),
+          cardTheme: CardTheme(
+            elevation: 2,
+            shadowColor: Colors.black.withOpacity(0.4),
+            color: const Color(0xFF242424),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(20),
             ),
           ),
           inputDecorationTheme: InputDecorationTheme(
             filled: true,
-            fillColor: Colors.transparent,
+            fillColor: const Color(0xFF2C2C2C),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(24),
+              borderSide: BorderSide.none,
             ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(24),
+              borderSide:
+                  const BorderSide(color: Color(0xFFFA8072), width: 1.5),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          ),
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: ElevatedButton.styleFrom(
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
           ),
         ),
         themeMode: ThemeMode.system,

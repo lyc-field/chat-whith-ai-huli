@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
@@ -20,12 +19,13 @@ class ChatProvider extends ChangeNotifier {
   static const archiveCount = 10;
 
   ConversationProvider _convProvider;
-  DeepSeekService? _service;       // chat model
+  DeepSeekService? _service; // chat model
   String _providerType = 'deepseek';
   bool _affectionEnabled = true;
   String? _currentConvId;
   String? _systemPrompt;
   String? _userPersona;
+  String? _worldBackground;
   String _mode = 'summary';
 
   List<Message> _messages = [];
@@ -59,6 +59,7 @@ class ChatProvider extends ChangeNotifier {
   String? get currentConvId => _currentConvId;
   String? get systemPrompt => _systemPrompt;
   String? get userPersona => _userPersona;
+  String? get worldBackground => _worldBackground;
   String get mode => _mode;
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
@@ -145,6 +146,7 @@ class ChatProvider extends ChangeNotifier {
     final conv = await DatabaseService.getConversation(convId);
     _systemPrompt = conv.systemPrompt;
     _userPersona = conv.userPersona;
+    _worldBackground = conv.worldBackground;
     _mode = conv.mode;
     _error = null;
     _showSummaryPrompt = false;
@@ -155,21 +157,35 @@ class ChatProvider extends ChangeNotifier {
     // Load or create emotion state, apply decay
     _emotionState = await DatabaseService.getEmotionState(convId);
     if (_emotionState == null) {
-      _emotionState = EmotionState.createDefault(convId, initialAffection: conv.affection.toDouble());
+      _emotionState = EmotionState.createDefault(convId,
+          initialAffection: conv.affection.toDouble());
       await DatabaseService.insertEmotionState(_emotionState!);
     } else {
       // Apply decay on load
       final now = DateTime.now();
-      final elapsedOther = now.difference(_emotionState!.lastUpdate).inSeconds / 3600.0;
+      final elapsedOther =
+          now.difference(_emotionState!.lastUpdate).inSeconds / 3600.0;
       if (elapsedOther > 0) {
         _emotionState!.currentLibidoOther = DecayCalculator.applyDecay(
-            _emotionState!.currentLibidoOther, _emotionState!.baseLibidoOther, elapsedOther, 2.0);
+            _emotionState!.currentLibidoOther,
+            _emotionState!.baseLibidoOther,
+            elapsedOther,
+            2.0);
         _emotionState!.currentAggressionOther = DecayCalculator.applyDecay(
-            _emotionState!.currentAggressionOther, _emotionState!.baseAggressionOther, elapsedOther, 2.0);
+            _emotionState!.currentAggressionOther,
+            _emotionState!.baseAggressionOther,
+            elapsedOther,
+            2.0);
         _emotionState!.currentLibidoSelf = DecayCalculator.applyDecay(
-            _emotionState!.currentLibidoSelf, _emotionState!.baseLibidoSelf, elapsedOther, 2.0);
+            _emotionState!.currentLibidoSelf,
+            _emotionState!.baseLibidoSelf,
+            elapsedOther,
+            2.0);
         _emotionState!.currentAggressionSelf = DecayCalculator.applyDecay(
-            _emotionState!.currentAggressionSelf, _emotionState!.baseAggressionSelf, elapsedOther, 2.0);
+            _emotionState!.currentAggressionSelf,
+            _emotionState!.baseAggressionSelf,
+            elapsedOther,
+            2.0);
         _emotionState!.lastUpdate = now;
       }
       _emotionState!.lastInteraction = now;
@@ -190,6 +206,7 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
     _systemPrompt = null;
     _userPersona = null;
+    _worldBackground = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
     _showQuickReplies = false;
@@ -207,10 +224,10 @@ class ChatProvider extends ChangeNotifier {
 
     // Rule: AI message can only be bookmarked if preceding user msg is already bookmarked
     if (msg.role == 'assistant') {
-      final prevUser = messageIndex > 0
-          ? _messages[messageIndex - 1]
-          : null;
-      if (prevUser == null || prevUser.role != 'user' || !prevUser.isBookmarked) {
+      final prevUser = messageIndex > 0 ? _messages[messageIndex - 1] : null;
+      if (prevUser == null ||
+          prevUser.role != 'user' ||
+          !prevUser.isBookmarked) {
         // Not allowed — preceding user must be bookmarked first
         return;
       }
@@ -239,7 +256,7 @@ class ChatProvider extends ChangeNotifier {
     if ((raw.round() - _previousRawAffection.round()).abs() >= 1) {
       _affectionIncreasing = raw > _previousRawAffection;
       _previousRawAffection = raw;
-  
+
       return true;
     }
     _affectionIncreasing = null;
@@ -275,6 +292,24 @@ class ChatProvider extends ChangeNotifier {
       final conv = await DatabaseService.getConversation(_currentConvId!);
       final updated = conv.copyWith(
         userPersona: _userPersona,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateConversation(updated);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setWorldBackground(String background) async {
+    final trimmed = background.trim();
+    if (trimmed.isEmpty) {
+      _worldBackground = null;
+    } else {
+      _worldBackground = trimmed;
+    }
+    if (_currentConvId != null) {
+      final conv = await DatabaseService.getConversation(_currentConvId!);
+      final updated = conv.copyWith(
+        worldBackground: _worldBackground,
         updatedAt: DateTime.now(),
       );
       await DatabaseService.updateConversation(updated);
@@ -320,7 +355,8 @@ class ChatProvider extends ChangeNotifier {
     _previousRawAffection = 30.0;
     _affectionIncreasing = null;
     if (_emotionState != null) {
-      _emotionState = EmotionState.createDefault(_currentConvId!, initialAffection: 30.0);
+      _emotionState =
+          EmotionState.createDefault(_currentConvId!, initialAffection: 30.0);
       await DatabaseService.updateEmotionState(_emotionState!);
     }
     // Update conversation affection in DB
@@ -380,14 +416,16 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
 
     if (_currentConvId == null) {
-      final conv = await _convProvider.createConversation(initialAffection: _affection.round(), mode: _mode);
+      final conv = await _convProvider.createConversation(
+          initialAffection: _affection.round(), mode: _mode);
       _currentConvId = conv.id;
       if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
         final updated = conv.copyWith(systemPrompt: _systemPrompt);
         await DatabaseService.updateConversation(updated);
       }
       // Create emotion state for new conversation
-      _emotionState = EmotionState.createDefault(_currentConvId!, initialAffection: _affection);
+      _emotionState = EmotionState.createDefault(_currentConvId!,
+          initialAffection: _affection);
       await DatabaseService.insertEmotionState(_emotionState!);
     }
 
@@ -426,6 +464,7 @@ class ChatProvider extends ChangeNotifier {
       systemPrompt: _systemPrompt,
       conversationPrompt: conv.systemPrompt,
       userPersona: _userPersona ?? conv.userPersona,
+      worldBackground: _worldBackground ?? conv.worldBackground,
       emotionState: _emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
@@ -448,7 +487,8 @@ class ChatProvider extends ChangeNotifier {
           var display = _streamingContent;
           // Hide trailing Δ tag during streaming.
           // Matches Δ±0, Δ+0.2, Δ-0, Δ0 etc. (both ± and ASCII +/-).
-          final deltaMatch = RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
+          final deltaMatch =
+              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
           if (deltaMatch != null) {
             display = display.substring(0, deltaMatch.start).trimRight();
           }
@@ -462,11 +502,14 @@ class ChatProvider extends ChangeNotifier {
 
       // Parse and strip the Δ tag, apply immediately
       var cleanContent = fullContent;
-      final inlineMatch = RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
+      final inlineMatch =
+          RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
       if (inlineMatch != null) {
-        inlineDelta = (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
+        inlineDelta =
+            (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
         inlineReason = inlineMatch.group(2)!.trim();
-        cleanContent = cleanContent.replaceFirst(inlineMatch.group(0)!, '').trimRight();
+        cleanContent =
+            cleanContent.replaceFirst(inlineMatch.group(0)!, '').trimRight();
         if (cleanContent.isEmpty) cleanContent = fullContent;
       }
       final savedMsg = assistantMsg.copyWith(content: cleanContent);
@@ -491,8 +534,8 @@ class ChatProvider extends ChangeNotifier {
       }
 
       // Update conversation timestamp and affection
-      final updatedConv =
-          conv.copyWith(updatedAt: DateTime.now(), affection: _affection.round());
+      final updatedConv = conv.copyWith(
+          updatedAt: DateTime.now(), affection: _affection.round());
       await DatabaseService.updateConversation(updatedConv);
     } catch (e) {
       _error = '请求失败: $e';
@@ -515,14 +558,21 @@ class ChatProvider extends ChangeNotifier {
       // Δ tag already handled affection — just update emotion values
       _previousRawAffection = _affection;
     }
-    if (_affectionEnabled && _analyzer != null && _emotionState != null && !safeMode) {
-      Future.delayed(const Duration(milliseconds: 300), () => _doEmotionAnalysis(text.trim()));
+    if (_affectionEnabled &&
+        _analyzer != null &&
+        _emotionState != null &&
+        !safeMode) {
+      Future.delayed(const Duration(milliseconds: 300),
+          () => _doEmotionAnalysis(text.trim()));
     }
     // Generate quick replies via separate API call (every round, all providers)
     if (_service != null) {
-      final aiMsgs = _messages.where((m) => m.role == 'assistant' && m.content.isNotEmpty).toList();
+      final aiMsgs = _messages
+          .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
+          .toList();
       if (aiMsgs.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 400), () => _generateQuickReplies(aiMsgs.last.content));
+        Future.delayed(const Duration(milliseconds: 400),
+            () => _generateQuickReplies(aiMsgs.last.content));
       }
     }
   }
@@ -530,7 +580,10 @@ class ChatProvider extends ChangeNotifier {
   /// Unified emotion analysis via unconscious LLM.
   /// Called after every AI reply. Updates both emotion values and affection.
   Future<void> _doEmotionAnalysis(String userMessage) async {
-    if (_currentConvId == null || !_affectionEnabled || _analyzer == null || _emotionState == null) return;
+    if (_currentConvId == null ||
+        !_affectionEnabled ||
+        _analyzer == null ||
+        _emotionState == null) return;
 
     try {
       final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
@@ -553,19 +606,27 @@ class ChatProvider extends ChangeNotifier {
       final ls = (deltas['libido_self_delta'] as double) * sensitivity;
       final as_ = (deltas['aggression_self_delta'] as double) * sensitivity;
 
-      _emotionState!.currentLibidoOther = (_emotionState!.currentLibidoOther + lo).clamp(0.0, 50.0);
-      _emotionState!.currentAggressionOther = (_emotionState!.currentAggressionOther + ao).clamp(0.0, 50.0);
-      _emotionState!.currentLibidoSelf = (_emotionState!.currentLibidoSelf + ls).clamp(0.0, 50.0);
-      _emotionState!.currentAggressionSelf = (_emotionState!.currentAggressionSelf + as_).clamp(0.0, 50.0);
+      _emotionState!.currentLibidoOther =
+          (_emotionState!.currentLibidoOther + lo).clamp(0.0, 50.0);
+      _emotionState!.currentAggressionOther =
+          (_emotionState!.currentAggressionOther + ao).clamp(0.0, 50.0);
+      _emotionState!.currentLibidoSelf =
+          (_emotionState!.currentLibidoSelf + ls).clamp(0.0, 50.0);
+      _emotionState!.currentAggressionSelf =
+          (_emotionState!.currentAggressionSelf + as_).clamp(0.0, 50.0);
 
       _emotionState!.baseLibidoOther = (_emotionState!.baseLibidoOther +
-          (deltas['base_libido_other_delta'] as double) * sensitivity).clamp(0.0, 50.0);
+              (deltas['base_libido_other_delta'] as double) * sensitivity)
+          .clamp(0.0, 50.0);
       _emotionState!.baseAggressionOther = (_emotionState!.baseAggressionOther +
-          (deltas['base_aggression_other_delta'] as double) * sensitivity).clamp(0.0, 50.0);
+              (deltas['base_aggression_other_delta'] as double) * sensitivity)
+          .clamp(0.0, 50.0);
       _emotionState!.baseLibidoSelf = (_emotionState!.baseLibidoSelf +
-          (deltas['base_libido_self_delta'] as double) * sensitivity).clamp(0.0, 50.0);
+              (deltas['base_libido_self_delta'] as double) * sensitivity)
+          .clamp(0.0, 50.0);
       _emotionState!.baseAggressionSelf = (_emotionState!.baseAggressionSelf +
-          (deltas['base_aggression_self_delta'] as double) * sensitivity).clamp(0.0, 50.0);
+              (deltas['base_aggression_self_delta'] as double) * sensitivity)
+          .clamp(0.0, 50.0);
 
       _emotionState!.turnCount++;
       _emotionState!.lastUpdate = DateTime.now();
@@ -607,16 +668,20 @@ class ChatProvider extends ChangeNotifier {
               : '语气自然日常';
       // Grab recent exchanges for context
       final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
-      final recent = allMsgs.length > 6 ? allMsgs.sublist(allMsgs.length - 6) : allMsgs;
-      final context = recent.map((m) => '${m.role == 'user' ? '用户' : '角色'}: ${m.content}').join('\n');
+      final recent =
+          allMsgs.length > 6 ? allMsgs.sublist(allMsgs.length - 6) : allMsgs;
+      final context = recent
+          .map((m) => '${m.role == 'user' ? '用户' : '角色'}: ${m.content}')
+          .join('\n');
       final prompt = '对话：\n$context\n\n'
           '根据以上对话，生成用户接下来可能对角色说的2个回复选项：\n'
           '1. safe（保守）：自然跟随剧情，15字以内\n'
           '2. novel（创意）：更有想象力但不偏离，15字以内\n'
           '$toneGuide\n'
           '只输出JSON：{"safe":"...","novel":"..."}';
-      final result = await _service!.chatRaw(prompt,
-          '你不是角色。你是快捷回复助手，替【用户】生成回复，发送给【角色】。站在用户视角，生成用户对角色说的话。只输出JSON，不要解释。')
+      final result = await _service!
+          .chatRaw(prompt,
+              '你不是角色。你是快捷回复助手，替【用户】生成回复，发送给【角色】。站在用户视角，生成用户对角色说的话。只输出JSON，不要解释。')
           .timeout(const Duration(seconds: 10));
       final json = _extractJson(result);
       if (json != null) {
@@ -634,7 +699,8 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Map<String, dynamic>? _extractJson(String text) => JsonUtils.extractJson(text);
+  Map<String, dynamic>? _extractJson(String text) =>
+      JsonUtils.extractJson(text);
 
   /// Send a quick reply as user message.
   Future<void> sendQuickReply(String text) async {
@@ -646,7 +712,10 @@ class ChatProvider extends ChangeNotifier {
 
   /// Let AI continue without user input (no visible user message).
   Future<void> sendContinueCommand() async {
-    if (_isPending || _isContinuing || _service == null || _currentConvId == null) return;
+    if (_isPending ||
+        _isContinuing ||
+        _service == null ||
+        _currentConvId == null) return;
     _isContinuing = true;
     _showQuickReplies = false;
     _quickReplies = [];
@@ -670,6 +739,7 @@ class ChatProvider extends ChangeNotifier {
         systemPrompt: _systemPrompt,
         conversationPrompt: conv.systemPrompt,
         userPersona: _userPersona ?? conv.userPersona,
+        worldBackground: _worldBackground ?? conv.worldBackground,
         emotionState: _emotionState,
         affectionEnabled: _affectionEnabled,
         mode: _mode,
@@ -685,11 +755,13 @@ class ChatProvider extends ChangeNotifier {
         onToken: (token) {
           _streamingContent += token;
           var display = _streamingContent;
-          final deltaMatch = RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
+          final deltaMatch =
+              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
           if (deltaMatch != null) {
             display = display.substring(0, deltaMatch.start).trimRight();
           }
-          _messages[_messages.length - 1] = assistantMsg.copyWith(content: display);
+          _messages[_messages.length - 1] =
+              assistantMsg.copyWith(content: display);
           notifyListeners();
         },
         onDone: () => _streamingContent = '',
@@ -703,7 +775,9 @@ class ChatProvider extends ChangeNotifier {
       await DatabaseService.updateConversation(updatedConv);
     } catch (e) {
       _error = '请求失败: $e';
-      if (_messages.isNotEmpty && _messages.last.role == 'assistant' && _messages.last.content.isEmpty) {
+      if (_messages.isNotEmpty &&
+          _messages.last.role == 'assistant' &&
+          _messages.last.content.isEmpty) {
         _messages.removeLast();
       }
     }
@@ -715,9 +789,12 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
     // Generate quick replies after continue (no Δ/emotion analysis for continue)
     if (_service != null) {
-      final aiMsgs = _messages.where((m) => m.role == 'assistant' && m.content.isNotEmpty).toList();
+      final aiMsgs = _messages
+          .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
+          .toList();
       if (aiMsgs.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 400), () => _generateQuickReplies(aiMsgs.last.content));
+        Future.delayed(const Duration(milliseconds: 400),
+            () => _generateQuickReplies(aiMsgs.last.content));
       }
     }
   }
@@ -744,7 +821,8 @@ class ChatProvider extends ChangeNotifier {
       segmentIndex: segmentIndex,
     );
     await DatabaseService.insertSegmentSummary(summary);
-    await DatabaseService.updateMessageArchiveStatus(toArchiveIds, segmentIndex);
+    await DatabaseService.updateMessageArchiveStatus(
+        toArchiveIds, segmentIndex);
 
     for (int i = 0; i < _messages.length; i++) {
       if (toArchiveIds.contains(_messages[i].id)) {
@@ -769,9 +847,10 @@ class ChatProvider extends ChangeNotifier {
             .join('\n');
 
         // Build in-character diary-style summary prompt using persona
-        final persona = (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
-            ? _systemPrompt!.trim()
-            : null;
+        final persona =
+            (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
+                ? _systemPrompt!.trim()
+                : null;
         final systemPrompt = persona != null
             ? '$persona\n\n现在，你正在写日记，以第一人称「我」的口吻回顾刚才发生的事。你必须完全保持设定中的性格、语气和说话风格。日记内容要像角色本人写的，不要像第三人称总结。'
             : '你是总结助手。请用第一人称「我」的口吻回顾以下对话，保持角色的性格和语气。';
@@ -784,7 +863,8 @@ class ChatProvider extends ChangeNotifier {
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);
           await DatabaseService.updateSegmentSummary(updated);
-          final idx = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
+          final idx =
+              _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
           if (idx != -1) _segments[idx] = updated;
         }
       } catch (e) {

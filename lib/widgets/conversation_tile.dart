@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/conversation.dart';
 
@@ -7,6 +8,7 @@ class ConversationTile extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onToggleMode;
   final VoidCallback onSummaries;
+  final VoidCallback? onAvatarTap;
 
   const ConversationTile({
     super.key,
@@ -15,6 +17,7 @@ class ConversationTile extends StatelessWidget {
     required this.onDelete,
     required this.onToggleMode,
     required this.onSummaries,
+    this.onAvatarTap,
   });
 
   String _formatDate(DateTime dt) {
@@ -30,77 +33,143 @@ class ConversationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final firstChar = conversation.title.isNotEmpty ? conversation.title.characters.first : '?';
+    final firstChar = conversation.title.isNotEmpty
+        ? conversation.title.characters.first
+        : '?';
     final isBookmark = conversation.mode == 'bookmark';
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      elevation: 0,
+      shadowColor: theme.colorScheme.shadow.withOpacity(0.05),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withOpacity(0.5), width: 1),
+      ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Row(children: [
             // Avatar circle
-            Container(
-              width: 44, height: 44,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isBookmark
-                      ? [Colors.green.shade300, Colors.teal.shade500]
-                      : [theme.colorScheme.primary.withOpacity(0.7), theme.colorScheme.primary],
-                ),
-                borderRadius: BorderRadius.circular(14),
-              ),
+            GestureDetector(
+              onTap: onAvatarTap,
+              child: Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: isBookmark
+                        ? [Colors.green.shade300, Colors.teal.shade500]
+                        : [
+                            theme.colorScheme.primary.withOpacity(0.7),
+                            theme.colorScheme.primary
+                          ],
+                  ),
+                  shape: BoxShape.circle,
+                  image: conversation.avatarPath != null && conversation.avatarPath!.isNotEmpty
+                      ? DecorationImage(
+                          image: FileImage(File(conversation.avatarPath!)),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
+                  boxShadow: [
+                    BoxShadow(
+                      color:
+                          (isBookmark ? Colors.teal : theme.colorScheme.primary)
+                              .withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    )
+                  ]),
               alignment: Alignment.center,
-              child: Text(firstChar,
-                  style: TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onPrimary)),
+              child: conversation.avatarPath != null && conversation.avatarPath!.isNotEmpty
+                  ? null
+                  : Text(firstChar,
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onPrimary)),
+              ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             // Title + mode hint
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(conversation.title,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${isBookmark ? '书签模式' : '总结模式'} · ${_formatDate(conversation.updatedAt)}',
-                    style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(isBookmark ? Icons.flag : Icons.note_alt_outlined,
+                          size: 14, color: theme.colorScheme.outline),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${isBookmark ? '书签模式' : '总结模式'} · ${_formatDate(conversation.updatedAt)}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: theme.colorScheme.outline,
+                            fontWeight: FontWeight.w500),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
             // Mode toggle
-            IconButton(
-              onPressed: onToggleMode,
-              icon: Icon(isBookmark ? Icons.flag : Icons.note_alt_outlined, size: 20,
-                  color: isBookmark
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.outline),
-              tooltip: isBookmark ? '切换到总结模式' : '切换到书签模式',
-              visualDensity: VisualDensity.compact,
+            Container(
+              margin: const EdgeInsets.only(right: 4),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                onPressed: onToggleMode,
+                icon: Icon(isBookmark ? Icons.flag : Icons.note_alt_outlined,
+                    size: 20,
+                    color: isBookmark
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.outline),
+                tooltip: isBookmark ? '切换到总结模式' : '切换到书签模式',
+                visualDensity: VisualDensity.compact,
+              ),
             ),
             // View summaries
-            IconButton(
-              onPressed: onSummaries,
-              icon: Icon(isBookmark ? Icons.bookmarks : Icons.list_alt,
-                  size: 20, color: theme.colorScheme.outline),
-              tooltip: isBookmark ? '管理书签' : '查看总结',
-              visualDensity: VisualDensity.compact,
+            Container(
+              margin: const EdgeInsets.only(right: 4),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                onPressed: onSummaries,
+                icon: Icon(isBookmark ? Icons.bookmarks : Icons.list_alt,
+                    size: 20, color: theme.colorScheme.outline),
+                tooltip: isBookmark ? '管理书签' : '查看总结',
+                visualDensity: VisualDensity.compact,
+              ),
             ),
             // Delete
-            IconButton(
-              onPressed: () => _confirmDelete(context),
-              icon: Icon(Icons.delete_outline, size: 20,
-                  color: theme.colorScheme.error.withOpacity(0.6)),
-              visualDensity: VisualDensity.compact,
+            Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.errorContainer.withOpacity(0.5),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                onPressed: () => _confirmDelete(context),
+                icon: Icon(Icons.delete_outline,
+                    size: 20, color: theme.colorScheme.error),
+                visualDensity: VisualDensity.compact,
+              ),
             ),
           ]),
         ),
@@ -115,7 +184,8 @@ class ConversationTile extends StatelessWidget {
         title: const Text('删除对话'),
         content: Text('确定删除「${conversation.title}」？\n所有消息和总结将被永久删除。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () {
               onDelete();

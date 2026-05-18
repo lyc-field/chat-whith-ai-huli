@@ -8,6 +8,8 @@ class Conversation {
   final List<Message> messages;
   final String? systemPrompt;
   final String? userPersona;
+  final String? worldBackground;
+  final String? avatarPath;
   final int affection;
   final String mode; // 'summary' or 'bookmark'
 
@@ -19,6 +21,8 @@ class Conversation {
     this.messages = const [],
     this.systemPrompt,
     this.userPersona,
+    this.worldBackground,
+    this.avatarPath,
     this.affection = 30,
     this.mode = 'summary',
   });
@@ -31,6 +35,8 @@ class Conversation {
       'updated_at': updatedAt.toIso8601String(),
       'system_prompt': systemPrompt,
       'user_persona': userPersona,
+      'world_background': worldBackground,
+      'avatar_path': avatarPath,
       'affection': affection,
       'mode': mode,
     };
@@ -44,6 +50,8 @@ class Conversation {
       updatedAt: DateTime.parse(map['updated_at'] as String),
       systemPrompt: map['system_prompt'] as String?,
       userPersona: map['user_persona'] as String?,
+      worldBackground: map['world_background'] as String?,
+      avatarPath: map['avatar_path'] as String?,
       affection: map['affection'] as int? ?? 30,
       mode: (map['mode'] as String?) ?? 'summary',
     );
@@ -55,6 +63,8 @@ class Conversation {
     List<Message>? messages,
     String? systemPrompt,
     String? userPersona,
+    String? worldBackground,
+    String? avatarPath,
     int? affection,
     String? mode,
   }) {
@@ -66,6 +76,8 @@ class Conversation {
       messages: messages ?? this.messages,
       systemPrompt: systemPrompt ?? this.systemPrompt,
       userPersona: userPersona ?? this.userPersona,
+      worldBackground: worldBackground ?? this.worldBackground,
+      avatarPath: avatarPath ?? this.avatarPath,
       affection: affection ?? this.affection,
       mode: mode ?? this.mode,
     );

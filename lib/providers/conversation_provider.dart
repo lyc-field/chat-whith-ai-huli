@@ -61,4 +61,15 @@ class ConversationProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  Future<void> updateConversationAvatar(String id, String avatarPath) async {
+    final conv = await DatabaseService.getConversation(id);
+    final updated = conv.copyWith(avatarPath: avatarPath, updatedAt: DateTime.now());
+    await DatabaseService.updateConversation(updated);
+    final idx = _conversations.indexWhere((c) => c.id == id);
+    if (idx != -1) {
+      _conversations[idx] = updated;
+      notifyListeners();
+    }
+  }
 }

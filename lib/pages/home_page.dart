@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/conversation_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/conversation.dart';
@@ -18,7 +19,24 @@ class HomePage extends StatelessWidget {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('小狐爱说话', style: TextStyle(fontWeight: FontWeight.w700)),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child:
+                  Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
+            ),
+            const SizedBox(width: 8),
+            Text('小狐爱说话',
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+          ],
+        ),
         centerTitle: true,
         scrolledUnderElevation: 1,
         actions: [
@@ -27,6 +45,7 @@ class HomePage extends StatelessWidget {
             tooltip: 'API 设置',
             onPressed: () => _showApiKeyDialog(context),
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: Consumer<ConversationProvider>(
@@ -40,20 +59,43 @@ class HomePage extends StatelessWidget {
                 padding: const EdgeInsets.all(32),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Container(
-                    width: 88, height: 88,
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(24),
+                      gradient: LinearGradient(
+                        colors: [
+                          theme.colorScheme.primary.withOpacity(0.2),
+                          theme.colorScheme.primaryContainer.withOpacity(0.5),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: theme.colorScheme.primary.withOpacity(0.1),
+                          blurRadius: 20,
+                          spreadRadius: 5,
+                        ),
+                      ],
                     ),
-                    child: Icon(Icons.chat_bubble_outline_rounded, size: 40,
-                        color: theme.colorScheme.primary),
+                    child: Icon(Icons.forum_rounded,
+                        size: 50, color: theme.colorScheme.primary),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 32),
                   Text('开始你的故事',
-                      style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Text('点击下方按钮，创建新对话',
-                      style: TextStyle(fontSize: 14, color: theme.colorScheme.outline)),
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      )),
+                  const SizedBox(height: 12),
+                  Text('点击下方的按钮来唤醒一只小狐狸\n开启你们的独特对话吧~',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 15,
+                          color: theme.colorScheme.outline,
+                          height: 1.5)),
+                  const SizedBox(height: 48),
                 ]),
               ),
             );
@@ -68,20 +110,32 @@ class HomePage extends StatelessWidget {
                 onTap: () => _openChat(context, conv),
                 onDelete: () => convProvider.deleteConversation(conv.id),
                 onToggleMode: () {
-                  final newMode = conv.mode == 'bookmark' ? 'summary' : 'bookmark';
+                  final newMode =
+                      conv.mode == 'bookmark' ? 'summary' : 'bookmark';
                   convProvider.setConversationMode(conv.id, newMode);
                 },
                 onSummaries: () {
                   if (conv.mode == 'bookmark') {
-                    Navigator.push(context,
+                    Navigator.push(
+                        context,
                         MaterialPageRoute(
-                            builder: (_) =>
-                                BookmarkManagementPage(conversationId: conv.id)));
+                            builder: (_) => BookmarkManagementPage(
+                                conversationId: conv.id)));
                   } else {
-                    Navigator.push(context,
+                    Navigator.push(
+                        context,
                         MaterialPageRoute(
-                            builder: (_) =>
-                                SummaryManagementPage(conversationId: conv.id)));
+                            builder: (_) => SummaryManagementPage(
+                                conversationId: conv.id)));
+                  }
+                },
+                onAvatarTap: () async {
+                  FilePickerResult? result = await FilePicker.platform.pickFiles(
+                    type: FileType.image,
+                  );
+                  if (result != null && result.files.single.path != null) {
+                    await convProvider.updateConversationAvatar(
+                        conv.id, result.files.single.path!);
                   }
                 },
               );
@@ -91,15 +145,22 @@ class HomePage extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openChat(context, null),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('新对话'),
+        elevation: 4,
+        highlightElevation: 8,
+        backgroundColor: theme.colorScheme.primary,
+        foregroundColor: theme.colorScheme.onPrimary,
+        icon: const Icon(Icons.add_rounded, size: 24),
+        label: const Text('新对话',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
       ),
     );
   }
 
   void _openChat(BuildContext context, Conversation? conversation) {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => ChatPage(conversation: conversation)));
+    Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => ChatPage(conversation: conversation)));
   }
 
   void _showApiKeyDialog(BuildContext context) {
@@ -127,7 +188,8 @@ class HomePage extends StatelessWidget {
                       prefixIcon: Icon(Icons.cloud, size: 20),
                     ),
                     items: const [
-                      DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
+                      DropdownMenuItem(
+                          value: 'deepseek', child: Text('DeepSeek')),
                       DropdownMenuItem(value: 'openai', child: Text('OpenAI')),
                       DropdownMenuItem(value: 'custom', child: Text('自定义端点')),
                     ],

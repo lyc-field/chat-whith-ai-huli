@@ -20,6 +20,7 @@ class ContextBuilder {
     required String? systemPrompt,
     required String? conversationPrompt,
     required String? userPersona,
+    required String? worldBackground,
     required EmotionState? emotionState,
     required bool affectionEnabled,
     required String mode,
@@ -43,13 +44,19 @@ class ContextBuilder {
       }
       if (userPersona != null && userPersona.trim().isNotEmpty) {
         sb.writeln();
-        sb.writeln('【你正在对话的对象】');
+        sb.writeln('【你正在对话的对象（用户）】');
         sb.writeln(userPersona.trim());
+      }
+      if (worldBackground != null && worldBackground.trim().isNotEmpty) {
+        sb.writeln();
+        sb.writeln('【世界背景】');
+        sb.writeln(worldBackground.trim());
       }
       if (affectionEnabled && emotionState != null) {
         _appendEmotionPanel(sb, emotionState);
       }
-      if ((hasUser || (affectionEnabled && emotionState != null)) && hasGlobal) {
+      if ((hasUser || (affectionEnabled && emotionState != null)) &&
+          hasGlobal) {
         sb.writeln();
         sb.writeln('---');
         sb.writeln();
@@ -81,7 +88,8 @@ class ContextBuilder {
 
     // 4. Bookmarked messages (bookmark mode only)
     if (mode == 'bookmark') {
-      final bookmarkMsgs = await DatabaseService.getBookmarkedMessages(conversationId);
+      final bookmarkMsgs =
+          await DatabaseService.getBookmarkedMessages(conversationId);
       final recentIds = recent.map((m) => m.id).toSet();
       for (final bm in bookmarkMsgs) {
         if (!recentIds.contains(bm.id)) {
@@ -117,12 +125,17 @@ class ContextBuilder {
     final labels = EmotionTables.getEmotionDescription(state);
     sb.writeln();
     sb.writeln('【当前情绪数值】');
-    sb.writeln('他力比多：${state.currentLibidoOther.toStringAsFixed(1)}/50（亲近/给予温暖的欲望）');
-    sb.writeln('他攻击性：${state.currentAggressionOther.toStringAsFixed(1)}/50（推开/伤害的冲动）');
+    sb.writeln(
+        '他力比多：${state.currentLibidoOther.toStringAsFixed(1)}/50（亲近/给予温暖的欲望）');
+    sb.writeln(
+        '他攻击性：${state.currentAggressionOther.toStringAsFixed(1)}/50（推开/伤害的冲动）');
     sb.writeln('好感度：${state.affection.toStringAsFixed(1)}/100');
-    sb.writeln('自力比多：${state.currentLibidoSelf.toStringAsFixed(1)}/50（自爱/珍视自己）');
-    sb.writeln('自攻击性：${state.currentAggressionSelf.toStringAsFixed(1)}/50（自责/自我毁灭）');
-    sb.writeln('参考标签：对用户「${labels['towards_user']}」，自身「${labels['self_state']}」');
+    sb.writeln(
+        '自力比多：${state.currentLibidoSelf.toStringAsFixed(1)}/50（自爱/珍视自己）');
+    sb.writeln(
+        '自攻击性：${state.currentAggressionSelf.toStringAsFixed(1)}/50（自责/自我毁灭）');
+    sb.writeln(
+        '参考标签：对用户「${labels['towards_user']}」，自身「${labels['self_state']}」');
     if (EmotionTables.isSelfDestructMode(state)) {
       sb.writeln('⚠ 当前处于自毁倾诉模式：话量激增、自我贬低、难以自控');
     }

@@ -23,15 +23,19 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 10,
+        version: 12,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
     } catch (e) {
-      try { await deleteDatabase(path); } catch (_) {
-        try { await File(path).delete(); } catch (_) {}
+      try {
+        await deleteDatabase(path);
+      } catch (_) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
       }
-      return await openDatabase(path, version: 10, onCreate: _onCreate);
+      return await openDatabase(path, version: 12, onCreate: _onCreate);
     }
   }
 
@@ -44,6 +48,8 @@ class DatabaseService {
         updated_at TEXT NOT NULL,
         system_prompt TEXT,
         user_persona TEXT,
+        world_background TEXT,
+        avatar_path TEXT,
         affection INTEGER NOT NULL DEFAULT 30,
         mode TEXT NOT NULL DEFAULT 'summary'
       )
@@ -121,9 +127,11 @@ class DatabaseService {
     ''');
   }
 
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _onUpgrade(
+      Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute('ALTER TABLE conversations ADD COLUMN system_prompt TEXT');
+      await db
+          .execute('ALTER TABLE conversations ADD COLUMN system_prompt TEXT');
     }
     if (oldVersion < 3) {
       await db.execute('''
@@ -135,7 +143,8 @@ class DatabaseService {
     }
     if (oldVersion < 4) {
       try {
-        await db.execute('ALTER TABLE messages ADD COLUMN segment_index INTEGER');
+        await db
+            .execute('ALTER TABLE messages ADD COLUMN segment_index INTEGER');
       } catch (_) {
         // Column may already exist from a partial previous migration.
       }
@@ -150,9 +159,18 @@ class DatabaseService {
       ''');
     }
     if (oldVersion < 5) {
-      try { await db.execute('ALTER TABLE conversations ADD COLUMN affection INTEGER NOT NULL DEFAULT 30'); } catch (_) {}
-      try { await db.execute('ALTER TABLE conversations ADD COLUMN judge_counter INTEGER NOT NULL DEFAULT 0'); } catch (_) {}
-      try { await db.execute('ALTER TABLE conversations ADD COLUMN judge_trigger INTEGER'); } catch (_) {}
+      try {
+        await db.execute(
+            'ALTER TABLE conversations ADD COLUMN affection INTEGER NOT NULL DEFAULT 30');
+      } catch (_) {}
+      try {
+        await db.execute(
+            'ALTER TABLE conversations ADD COLUMN judge_counter INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+      try {
+        await db.execute(
+            'ALTER TABLE conversations ADD COLUMN judge_trigger INTEGER');
+      } catch (_) {}
     }
     if (oldVersion < 6) {
       await db.execute('''
@@ -166,8 +184,14 @@ class DatabaseService {
       ''');
     }
     if (oldVersion < 7) {
-      try { await db.execute("ALTER TABLE affection_logs ADD COLUMN user_message TEXT NOT NULL DEFAULT ''"); } catch (_) {}
-      try { await db.execute("ALTER TABLE affection_logs ADD COLUMN ai_message TEXT NOT NULL DEFAULT ''"); } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE affection_logs ADD COLUMN user_message TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE affection_logs ADD COLUMN ai_message TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
     }
     if (oldVersion < 8) {
       await db.execute('''
@@ -206,11 +230,32 @@ class DatabaseService {
       ''');
     }
     if (oldVersion < 9) {
-      try { await db.execute("ALTER TABLE messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
-      try { await db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'summary'"); } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE messages ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'summary'");
+      } catch (_) {}
     }
     if (oldVersion < 10) {
-      try { await db.execute("ALTER TABLE conversations ADD COLUMN user_persona TEXT"); } catch (_) {}
+      try {
+        await db
+            .execute("ALTER TABLE conversations ADD COLUMN user_persona TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 11) {
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN world_background TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 12) {
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN avatar_path TEXT");
+      } catch (_) {}
     }
   }
 
@@ -224,7 +269,8 @@ class DatabaseService {
 
   static Future<Conversation> getConversation(String id) async {
     final db = await database;
-    final rows = await db.query('conversations', where: 'id = ?', whereArgs: [id]);
+    final rows =
+        await db.query('conversations', where: 'id = ?', whereArgs: [id]);
     if (rows.isEmpty) throw Exception('Conversation not found');
     return Conversation.fromMap(rows.first);
   }
@@ -245,10 +291,14 @@ class DatabaseService {
     final db = await database;
     await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
     await db.delete('messages', where: 'conversation_id = ?', whereArgs: [id]);
-    await db.delete('segment_summaries', where: 'conversation_id = ?', whereArgs: [id]);
-    await db.delete('affection_logs', where: 'conversation_id = ?', whereArgs: [id]);
-    await db.delete('emotion_states', where: 'conversation_id = ?', whereArgs: [id]);
-    await db.delete('emotion_logs', where: 'conversation_id = ?', whereArgs: [id]);
+    await db.delete('segment_summaries',
+        where: 'conversation_id = ?', whereArgs: [id]);
+    await db.delete('affection_logs',
+        where: 'conversation_id = ?', whereArgs: [id]);
+    await db.delete('emotion_states',
+        where: 'conversation_id = ?', whereArgs: [id]);
+    await db
+        .delete('emotion_logs', where: 'conversation_id = ?', whereArgs: [id]);
   }
 
   /// ─── Settings ────────
@@ -287,12 +337,14 @@ class DatabaseService {
 
   static Future<void> deleteMessages(String conversationId) async {
     final db = await database;
-    await db.delete('messages', where: 'conversation_id = ?', whereArgs: [conversationId]);
+    await db.delete('messages',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
   }
 
   static Future<void> updateMessage(Message msg) async {
     final db = await database;
-    await db.update('messages', msg.toMap(), where: 'id = ?', whereArgs: [msg.id]);
+    await db
+        .update('messages', msg.toMap(), where: 'id = ?', whereArgs: [msg.id]);
   }
 
   static Future<void> deleteMessage(String id) async {
@@ -306,7 +358,8 @@ class DatabaseService {
         where: 'id = ?', whereArgs: [id]);
   }
 
-  static Future<List<Message>> getBookmarkedMessages(String conversationId) async {
+  static Future<List<Message>> getBookmarkedMessages(
+      String conversationId) async {
     final db = await database;
     final rows = await db.query(
       'messages',
@@ -368,7 +421,8 @@ class DatabaseService {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  static Future<List<AffectionLog>> getAffectionLogs(String conversationId) async {
+  static Future<List<AffectionLog>> getAffectionLogs(
+      String conversationId) async {
     final db = await database;
     final rows = await db.query(
       'affection_logs',
