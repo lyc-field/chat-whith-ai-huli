@@ -4,6 +4,7 @@ import '../models/conversation.dart';
 import '../models/segment_summary.dart';
 import '../providers/chat_provider.dart';
 import '../providers/conversation_provider.dart';
+import '../providers/persona_provider.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/tone_float_button.dart';
@@ -61,6 +62,7 @@ class _ChatPageState extends State<ChatPage> {
       });
     } else {
       provider.newConversation();
+      context.read<PersonaProvider>().initPendingDefault();
     }
 
     provider.addListener(_onProviderChange);

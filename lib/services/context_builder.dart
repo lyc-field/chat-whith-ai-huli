@@ -26,6 +26,7 @@ class ContextBuilder {
     required String mode,
     required List<Message> messages,
     required List<SegmentSummary> segments,
+    List<({String title, String content})>? kbResults,
     bool injectDeltaTag = false,
     bool injectContinue = false,
   }) async {
@@ -78,7 +79,22 @@ class ContextBuilder {
       }
     }
 
-    // 3. Active (non-archived, non-empty) messages
+    // 3. Knowledge base results (if any)
+    if (kbResults != null && kbResults.isNotEmpty) {
+      contextMsgs.add({
+        'role': 'system',
+        'content': '以下是与当前对话可能相关的参考资料，你可以在回复中参考其写作风格和情节，但不要直接复制：',
+      });
+      for (final kb in kbResults) {
+        final shortTitle = kb.title.split(RegExp(r'[/\\]')).last;
+        contextMsgs.add({
+          'role': 'system',
+          'content': '[参考《$shortTitle》] ${kb.content}',
+        });
+      }
+    }
+
+    // 4. Active (non-archived, non-empty) messages
     final active = messages
         .where((m) => m.content.isNotEmpty && m.segmentIndex == null)
         .toList();
@@ -86,7 +102,7 @@ class ContextBuilder {
         ? active.sublist(active.length - maxActiveMessages)
         : active;
 
-    // 4. Bookmarked messages (bookmark mode only)
+    // 5. Bookmarked messages (bookmark mode only)
     if (mode == 'bookmark') {
       final bookmarkMsgs =
           await DatabaseService.getBookmarkedMessages(conversationId);

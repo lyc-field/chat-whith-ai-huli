@@ -7,14 +7,22 @@ import '../models/conversation.dart';
 import '../models/segment_summary.dart';
 import '../models/affection_log.dart';
 import '../models/emotion_state.dart';
+import '../models/ai_persona.dart';
 
 class DatabaseService {
   static Database? _db;
+  static Future<Database>? _dbFuture;
 
   static Future<Database> get database async {
     if (_db != null) return _db!;
-    _db = await _init();
-    return _db!;
+    if (_dbFuture != null) return _dbFuture!;
+    _dbFuture = _init();
+    try {
+      _db = await _dbFuture;
+      return _db!;
+    } finally {
+      _dbFuture = null;
+    }
   }
 
   static Future<Database> _init() async {
@@ -23,19 +31,20 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 12,
+        version: 17,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
     } catch (e) {
+      print('Database init error: $e. Trying recovery without data loss...');
+      // Try opening with current version to see if it works at all
       try {
-        await deleteDatabase(path);
-      } catch (_) {
-        try {
-          await File(path).delete();
-        } catch (_) {}
-      }
-      return await openDatabase(path, version: 12, onCreate: _onCreate);
+        return await openDatabase(path, version: 17);
+      } catch (_) {}
+      // Last resort: wipe and recreate
+      try { await deleteDatabase(path); } catch (_) {}
+      try { await File(path).delete(); } catch (_) {}
+      return await openDatabase(path, version: 17, onCreate: _onCreate);
     }
   }
 
@@ -84,6 +93,7 @@ class DatabaseService {
       CREATE TABLE affection_logs (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
+        persona_id TEXT,
         delta REAL NOT NULL,
         reason TEXT NOT NULL,
         user_message TEXT NOT NULL DEFAULT '',
@@ -110,9 +120,29 @@ class DatabaseService {
       )
     ''');
     await db.execute('''
+      CREATE TABLE persona_emotion_states (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL,
+        affection REAL NOT NULL DEFAULT 30.0,
+        current_libido_other REAL NOT NULL DEFAULT 25.0,
+        base_libido_other REAL NOT NULL DEFAULT 25.0,
+        current_aggression_other REAL NOT NULL DEFAULT 25.0,
+        base_aggression_other REAL NOT NULL DEFAULT 25.0,
+        current_libido_self REAL NOT NULL DEFAULT 25.0,
+        base_libido_self REAL NOT NULL DEFAULT 25.0,
+        current_aggression_self REAL NOT NULL DEFAULT 25.0,
+        base_aggression_self REAL NOT NULL DEFAULT 25.0,
+        turn_count INTEGER NOT NULL DEFAULT 0,
+        last_interaction TEXT NOT NULL,
+        last_update TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
       CREATE TABLE emotion_logs (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
+        persona_id TEXT,
         affection_delta REAL,
         libido_other_delta REAL,
         aggression_other_delta REAL,
@@ -122,6 +152,38 @@ class DatabaseService {
         intensity REAL NOT NULL DEFAULT 1.0,
         user_message TEXT NOT NULL DEFAULT '',
         ai_message TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      )
+    ''');
+    // Knowledge base FTS5 + metadata
+    try {
+      await db.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks USING fts5(
+          title,
+          content,
+          tokenize='unicode61'
+        )
+      ''');
+    } catch (_) {}
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS kb_import_log (
+        file_path TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        imported_at TEXT NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE ai_personas (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        personality TEXT NOT NULL DEFAULT '',
+        habits TEXT NOT NULL DEFAULT '',
+        appearance TEXT NOT NULL DEFAULT '',
+        background TEXT NOT NULL DEFAULT '',
+        opening_line TEXT NOT NULL DEFAULT '',
+        affection REAL NOT NULL DEFAULT 30.0,
         created_at TEXT NOT NULL
       )
     ''');
@@ -256,6 +318,98 @@ class DatabaseService {
         await db.execute(
             "ALTER TABLE conversations ADD COLUMN avatar_path TEXT");
       } catch (_) {}
+    }
+    if (oldVersion < 13) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS ai_personas (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          personality TEXT NOT NULL DEFAULT '',
+          habits TEXT NOT NULL DEFAULT '',
+          appearance TEXT NOT NULL DEFAULT '',
+          background TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      ''');
+    }
+    if (oldVersion < 14) {
+      // Drop old global ai_personas (pre-isolation) and recreate with conversation_id
+      await db.execute('DROP TABLE IF EXISTS ai_personas');
+      await db.execute('''
+        CREATE TABLE ai_personas (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          personality TEXT NOT NULL DEFAULT '',
+          habits TEXT NOT NULL DEFAULT '',
+          appearance TEXT NOT NULL DEFAULT '',
+          background TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+      ''');
+    }
+    if (oldVersion < 15) {
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN opening_line TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+    }
+    if (oldVersion < 16) {
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN affection REAL NOT NULL DEFAULT 30.0");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE emotion_states ADD COLUMN persona_id TEXT");
+      } catch (_) {}
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS persona_emotion_states (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
+          persona_id TEXT NOT NULL,
+          affection REAL NOT NULL DEFAULT 30.0,
+          current_libido_other REAL NOT NULL DEFAULT 25.0,
+          base_libido_other REAL NOT NULL DEFAULT 25.0,
+          current_aggression_other REAL NOT NULL DEFAULT 25.0,
+          base_aggression_other REAL NOT NULL DEFAULT 25.0,
+          current_libido_self REAL NOT NULL DEFAULT 25.0,
+          base_libido_self REAL NOT NULL DEFAULT 25.0,
+          current_aggression_self REAL NOT NULL DEFAULT 25.0,
+          base_aggression_self REAL NOT NULL DEFAULT 25.0,
+          turn_count INTEGER NOT NULL DEFAULT 0,
+          last_interaction TEXT NOT NULL,
+          last_update TEXT NOT NULL
+        )
+      ''');
+      try {
+        await db.execute(
+            "ALTER TABLE affection_logs ADD COLUMN persona_id TEXT");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 17) {
+      try {
+        await db.execute('''
+          CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunks USING fts5(
+            title,
+            content,
+            tokenize='unicode61'
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS kb_import_log (
+            file_path TEXT PRIMARY KEY,
+            file_name TEXT NOT NULL,
+            imported_at TEXT NOT NULL
+          )
+        ''');
+      } catch (e) {
+        print('KB FTS5 init failed (may not be supported on this device): $e');
+      }
     }
   }
 
@@ -422,14 +576,24 @@ class DatabaseService {
   }
 
   static Future<List<AffectionLog>> getAffectionLogs(
-      String conversationId) async {
+      String conversationId, {String? personaId}) async {
     final db = await database;
-    final rows = await db.query(
-      'affection_logs',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'created_at DESC',
-    );
+    List<Map<String, dynamic>> rows;
+    if (personaId != null) {
+      rows = await db.query(
+        'affection_logs',
+        where: 'conversation_id = ? AND persona_id = ?',
+        whereArgs: [conversationId, personaId],
+        orderBy: 'created_at DESC',
+      );
+    } else {
+      rows = await db.query(
+        'affection_logs',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+        orderBy: 'created_at DESC',
+      );
+    }
     return rows.map((r) => AffectionLog.fromMap(r)).toList();
   }
 
@@ -454,14 +618,60 @@ class DatabaseService {
 
   static Future<void> updateEmotionState(EmotionState state) async {
     final db = await database;
-    await db.update('emotion_states', state.toMap(),
-        where: 'conversation_id = ?', whereArgs: [state.conversationId]);
+    if (state.personaId != null) {
+      await db.update('emotion_states', state.toMap(),
+          where: 'conversation_id = ? AND persona_id = ?',
+          whereArgs: [state.conversationId, state.personaId]);
+    } else {
+      await db.update('emotion_states', state.toMap(),
+          where: 'conversation_id = ? AND persona_id IS NULL',
+          whereArgs: [state.conversationId]);
+    }
   }
 
-  static Future<void> deleteEmotionState(String conversationId) async {
+  /// ─── Persona Emotion State CRUD ────────
+
+  static Future<EmotionState?> getPersonaEmotionState(String conversationId, String personaId) async {
     final db = await database;
-    await db.delete('emotion_states',
-        where: 'conversation_id = ?', whereArgs: [conversationId]);
+    final rows = await db.query(
+      'persona_emotion_states',
+      where: 'conversation_id = ? AND persona_id = ?',
+      whereArgs: [conversationId, personaId],
+    );
+    if (rows.isEmpty) return null;
+    return EmotionState.fromMap(rows.first);
+  }
+
+  static Future<void> insertPersonaEmotionState(EmotionState state) async {
+    final db = await database;
+    await db.insert('persona_emotion_states', state.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  static Future<void> updatePersonaEmotionState(EmotionState state) async {
+    final db = await database;
+    await db.update('persona_emotion_states', state.toMap(),
+        where: 'id = ?', whereArgs: [state.id]);
+  }
+
+  static Future<void> deletePersonaEmotionState(String conversationId, String personaId) async {
+    final db = await database;
+    await db.delete('persona_emotion_states',
+        where: 'conversation_id = ? AND persona_id = ?',
+        whereArgs: [conversationId, personaId]);
+  }
+
+  static Future<void> deleteEmotionState(String conversationId, {String? personaId}) async {
+    final db = await database;
+    if (personaId != null) {
+      await db.delete('emotion_states',
+          where: 'conversation_id = ? AND persona_id = ?',
+          whereArgs: [conversationId, personaId]);
+    } else {
+      await db.delete('emotion_states',
+          where: 'conversation_id = ? AND persona_id IS NULL',
+          whereArgs: [conversationId]);
+    }
   }
 
   /// ─── Emotion Log CRUD ────────
@@ -472,14 +682,119 @@ class DatabaseService {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  static Future<List<EmotionLog>> getEmotionLogs(String conversationId) async {
+  static Future<List<EmotionLog>> getEmotionLogs(String conversationId, {String? personaId}) async {
+    final db = await database;
+    List<Map<String, dynamic>> rows;
+    if (personaId != null) {
+      rows = await db.query(
+        'emotion_logs',
+        where: 'conversation_id = ? AND persona_id = ?',
+        whereArgs: [conversationId, personaId],
+        orderBy: 'created_at DESC',
+      );
+    } else {
+      rows = await db.query(
+        'emotion_logs',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+        orderBy: 'created_at DESC',
+      );
+    }
+    return rows.map((r) => EmotionLog.fromMap(r)).toList();
+  }
+
+  /// ─── AI Persona CRUD ────────
+
+  static Future<List<AIPersona>> getAIPersonas(String conversationId) async {
     final db = await database;
     final rows = await db.query(
-      'emotion_logs',
+      'ai_personas',
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
-      orderBy: 'created_at DESC',
+      orderBy: 'created_at ASC',
     );
-    return rows.map((r) => EmotionLog.fromMap(r)).toList();
+    return rows.map((r) => AIPersona.fromMap(r)).toList();
+  }
+
+  static Future<void> insertAIPersona(AIPersona persona) async {
+    final db = await database;
+    await db.insert('ai_personas', persona.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  static Future<void> updateAIPersona(AIPersona persona) async {
+    final db = await database;
+    await db.update('ai_personas', persona.toMap(),
+        where: 'id = ?', whereArgs: [persona.id]);
+  }
+
+  static Future<void> deleteAIPersona(String id) async {
+    final db = await database;
+    await db.delete('ai_personas', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<void> deleteAIPersonasByConversation(String conversationId) async {
+    final db = await database;
+    await db.delete('ai_personas',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+  }
+
+  /// ─── Knowledge Base (FTS5) ────────
+
+  static Future<void> insertKbChunk(String title, String content) async {
+    try {
+      final db = await database;
+      await db.insert('kb_chunks', {'title': title, 'content': content});
+    } catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> searchKb(String query, {int limit = 5}) async {
+    try {
+      final db = await database;
+      final safe = query
+          .replaceAll(RegExp(r'["''*()]'), '')
+          .replaceAll(RegExp(r'\s+'), ' ');
+      if (safe.trim().isEmpty) return [];
+      final rows = await db.rawQuery(
+        "SELECT title, content, rank FROM kb_chunks WHERE kb_chunks MATCH ? ORDER BY rank LIMIT ?",
+        [safe, limit],
+      );
+      return rows;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<int> kbChunkCount() async {
+    try {
+      final db = await database;
+      final result = await db.rawQuery('SELECT count(*) as cnt FROM kb_chunks');
+      return result.first['cnt'] as int;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<void> clearKb() async {
+    final db = await database;
+    await db.delete('kb_chunks');
+    await db.delete('kb_import_log');
+  }
+
+  /// ─── KB Import Log ────────
+
+  static Future<Set<String>> getImportedFiles() async {
+    final db = await database;
+    final rows = await db.query('kb_import_log');
+    return rows.map((r) => r['file_path'] as String).toSet();
+  }
+
+  static Future<void> markFileImported(String filePath, String fileName) async {
+    final db = await database;
+    await db.insert('kb_import_log', {
+      'file_path': filePath,
+      'file_name': fileName,
+      'imported_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 }

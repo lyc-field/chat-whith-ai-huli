@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/conversation_provider.dart';
 import 'providers/chat_provider.dart';
+import 'providers/persona_provider.dart';
 import 'services/auth_service.dart';
 import 'pages/home_page.dart';
 
@@ -17,8 +18,12 @@ class ChatApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ConversationProvider()),
+        ChangeNotifierProvider(create: (_) => PersonaProvider()),
         ChangeNotifierProxyProvider<ConversationProvider, ChatProvider>(
-          create: (ctx) => ChatProvider(ctx.read<ConversationProvider>()),
+          create: (ctx) => ChatProvider(
+            ctx.read<ConversationProvider>(),
+            ctx.read<PersonaProvider>(),
+          ),
           update: (ctx, convProvider, previous) =>
               previous!..updateConvProvider(convProvider),
         ),

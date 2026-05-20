@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/affection_log.dart';
+import '../models/ai_persona.dart';
 import '../services/database_service.dart';
 
 class AffectionLogPage extends StatefulWidget {
@@ -19,14 +20,18 @@ class AffectionLogPage extends StatefulWidget {
 
 class _AffectionLogPageState extends State<AffectionLogPage> {
   List<AffectionLog> _logs = [];
+  Map<String, String> _personaNames = {};
   bool _loading = true;
   final Set<String> _expandedIds = {};
 
-  String get _characterName {
+  String get _defaultName {
     final t = widget.title.trim();
     if (t.isNotEmpty && t != '新对话') return t;
     return '角色';
   }
+
+  String _nameFor(String? personaId) =>
+      personaId != null ? (_personaNames[personaId] ?? '角色') : _defaultName;
 
   @override
   void initState() {
@@ -36,7 +41,14 @@ class _AffectionLogPageState extends State<AffectionLogPage> {
 
   Future<void> _load() async {
     _logs = await DatabaseService.getAffectionLogs(widget.conversationId);
-    if (mounted) setState(() => _loading = false);
+    // Load persona names
+    final personas = await DatabaseService.getAIPersonas(widget.conversationId);
+    if (mounted) {
+      setState(() {
+        _personaNames = {for (final p in personas) p.id: p.name};
+        _loading = false;
+      });
+    }
   }
 
   @override
@@ -109,7 +121,7 @@ class _AffectionLogPageState extends State<AffectionLogPage> {
                           text: TextSpan(
                             style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
                             children: [
-                              TextSpan(text: _characterName),
+                              TextSpan(text: _nameFor(log.personaId)),
                               TextSpan(
                                 text: '因为',
                                 style: TextStyle(

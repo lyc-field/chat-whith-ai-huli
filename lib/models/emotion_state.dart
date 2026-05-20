@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 class EmotionState {
   final String id;
   final String conversationId;
+  final String? personaId;
   double affection;
   double currentLibidoOther;
   double baseLibidoOther;
@@ -19,6 +20,7 @@ class EmotionState {
   EmotionState({
     required this.id,
     required this.conversationId,
+    this.personaId,
     this.affection = 30.0,
     this.currentLibidoOther = 25.0,
     this.baseLibidoOther = 25.0,
@@ -34,10 +36,11 @@ class EmotionState {
   })  : lastInteraction = lastInteraction ?? DateTime.now(),
         lastUpdate = lastUpdate ?? DateTime.now();
 
-  static EmotionState createDefault(String conversationId, {double initialAffection = 30.0}) {
+  static EmotionState createDefault(String conversationId, {double initialAffection = 30.0, String? personaId}) {
     return EmotionState(
       id: const Uuid().v4(),
       conversationId: conversationId,
+      personaId: personaId,
       affection: initialAffection,
     );
   }
@@ -46,6 +49,7 @@ class EmotionState {
     return {
       'id': id,
       'conversation_id': conversationId,
+      'persona_id': personaId,
       'affection': affection,
       'current_libido_other': currentLibidoOther,
       'base_libido_other': baseLibidoOther,
@@ -65,6 +69,7 @@ class EmotionState {
     return EmotionState(
       id: map['id'] as String,
       conversationId: map['conversation_id'] as String,
+      personaId: map['persona_id'] as String?,
       affection: (map['affection'] as num).toDouble(),
       currentLibidoOther: (map['current_libido_other'] as num).toDouble(),
       baseLibidoOther: (map['base_libido_other'] as num).toDouble(),
@@ -84,6 +89,7 @@ class EmotionState {
 class EmotionLog {
   final String id;
   final String conversationId;
+  final String? personaId;
   final double? affectionDelta;
   final double? libidoOtherDelta;
   final double? aggressionOtherDelta;
@@ -98,6 +104,7 @@ class EmotionLog {
   EmotionLog({
     required this.id,
     required this.conversationId,
+    this.personaId,
     this.affectionDelta,
     this.libidoOtherDelta,
     this.aggressionOtherDelta,
@@ -114,6 +121,7 @@ class EmotionLog {
     return {
       'id': id,
       'conversation_id': conversationId,
+      'persona_id': personaId,
       'affection_delta': affectionDelta,
       'libido_other_delta': libidoOtherDelta,
       'aggression_other_delta': aggressionOtherDelta,
@@ -131,6 +139,7 @@ class EmotionLog {
     return EmotionLog(
       id: map['id'] as String,
       conversationId: map['conversation_id'] as String,
+      personaId: map['persona_id'] as String?,
       affectionDelta: (map['affection_delta'] as num?)?.toDouble(),
       libidoOtherDelta: (map['libido_other_delta'] as num?)?.toDouble(),
       aggressionOtherDelta: (map['aggression_other_delta'] as num?)?.toDouble(),

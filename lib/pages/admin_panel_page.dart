@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/database_service.dart';
 import '../models/conversation.dart';
+import '../models/ai_persona.dart';
 import '../models/emotion_state.dart';
 import '../widgets/emotion_grid.dart';
+import 'knowledge_base_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -81,7 +83,145 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   }
 
   Future<void> _showEmotionAdjustDialog(Conversation conv) async {
-    // Load emotion state
+    // Load personas for this conversation
+    final personas = await DatabaseService.getAIPersonas(conv.id);
+    if (personas.isNotEmpty) {
+      // New format: let admin pick a persona first
+      _showPersonaSelectionDialog(conv, personas);
+    } else {
+      // Old format: conversation-level emotion adjustment
+      _showConversationEmotionDialog(conv);
+    }
+  }
+
+  void _showPersonaSelectionDialog(Conversation conv, List<AIPersona> personas) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${conv.title} — 选择角色', maxLines: 1, overflow: TextOverflow.ellipsis),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: personas.length,
+            itemBuilder: (_, i) {
+              final p = personas[i];
+              return ListTile(
+                leading: CircleAvatar(
+                  child: Text('${p.affection.round()}', style: const TextStyle(fontSize: 11)),
+                ),
+                title: Text(p.name.isNotEmpty ? p.name : '未命名角色'),
+                subtitle: Text('好感度: ${p.affection.toStringAsFixed(1)}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showPersonaEmotionDialog(conv, p);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showPersonaEmotionDialog(Conversation conv, AIPersona persona) async {
+    EmotionState? state = await DatabaseService.getPersonaEmotionState(conv.id, persona.id);
+    if (state == null) {
+      state = EmotionState.createDefault(conv.id, initialAffection: persona.affection, personaId: persona.id);
+      await DatabaseService.insertPersonaEmotionState(state);
+    }
+
+    if (!mounted) return;
+    double affection = persona.affection;
+    double libidoOther = state.currentLibidoOther;
+    double aggressionOther = state.currentAggressionOther;
+    double libidoSelf = state.currentLibidoSelf;
+    double aggressionSelf = state.currentAggressionSelf;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDlgState) {
+            return AlertDialog(
+              title: Text(persona.name.isNotEmpty ? persona.name : '未命名', maxLines: 1, overflow: TextOverflow.ellipsis),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _sliderItem('好感度', affection, 0, 100, (v) => setDlgState(() => affection = v)),
+                      const Divider(),
+                      _sliderItem('他力比多', libidoOther, 0, 50, (v) => setDlgState(() => libidoOther = v)),
+                      _sliderItem('他攻击性', aggressionOther, 0, 50, (v) => setDlgState(() => aggressionOther = v)),
+                      const Divider(),
+                      _sliderItem('自力比多', libidoSelf, 0, 50, (v) => setDlgState(() => libidoSelf = v)),
+                      _sliderItem('自攻击性', aggressionSelf, 0, 50, (v) => setDlgState(() => aggressionSelf = v)),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            setDlgState(() {
+                              libidoOther = state!.baseLibidoOther;
+                              aggressionOther = state!.baseAggressionOther;
+                              libidoSelf = state!.baseLibidoSelf;
+                              aggressionSelf = state!.baseAggressionSelf;
+                            });
+                          },
+                          icon: const Icon(Icons.restart_alt, size: 16),
+                          label: const Text('重置当前值到基线'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSmallTowardsGrid(affection, libidoOther, aggressionOther),
+                      const SizedBox(height: 8),
+                      _buildSmallSelfGrid(libidoSelf, aggressionSelf),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    state!.affection = affection;
+                    state!.currentLibidoOther = libidoOther;
+                    state!.currentAggressionOther = aggressionOther;
+                    state!.currentLibidoSelf = libidoSelf;
+                    state!.currentAggressionSelf = aggressionSelf;
+                    state!.lastUpdate = DateTime.now();
+                    persona.affection = affection;
+                    await DatabaseService.updatePersonaEmotionState(state!);
+                    await DatabaseService.updateAIPersona(persona);
+                    if (mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('角色情感数值已更新'),
+                            duration: Duration(seconds: 1)),
+                      );
+                    }
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showConversationEmotionDialog(Conversation conv) async {
     EmotionState? state = await DatabaseService.getEmotionState(conv.id);
     if (state == null) {
       state = EmotionState.createDefault(conv.id, initialAffection: conv.affection.toDouble());
@@ -133,7 +273,6 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      // Real-time emotion grids
                       _buildSmallTowardsGrid(affection, libidoOther, aggressionOther),
                       const SizedBox(height: 8),
                       _buildSmallSelfGrid(libidoSelf, aggressionSelf),
@@ -484,6 +623,20 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                   ),
                 ],
               ),
+            ),
+          ),
+          // ── 资料库 ──
+          const SizedBox(height: 24),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.library_books, size: 24),
+              title: const Text('资料库管理'),
+              subtitle: const Text('导入小说文本，让AI参考写作风格'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const KnowledgeBasePage()));
+              },
             ),
           ),
         ],
