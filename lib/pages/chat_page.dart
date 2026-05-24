@@ -337,141 +337,145 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ],
       ),
-      body: Column(children: [
-        if (provider.error != null)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: Row(children: [
-              Icon(Icons.error_outline, size: 18,
-                  color: Theme.of(context).colorScheme.onErrorContainer),
-              const SizedBox(width: 8),
-              Expanded(child: Text(provider.error!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.onErrorContainer,
-                      fontSize: 13))),
-              GestureDetector(
-                onTap: () {
-                  provider.newConversation();
-                  _expandedSegments.clear();
-                },
-                child: Icon(Icons.close, size: 18,
-                    color: Theme.of(context).colorScheme.onErrorContainer),
-              ),
-            ]),
-          ),
-        if (provider.showSummaryPrompt && provider.pendingSummaryIndex != null)
-          _buildSummaryPromptBanner(provider),
-        Expanded(
-          child: Stack(
+      body: LayoutBuilder(
+        builder: (_, constraints) {
+          if (!_fabInitialized) {
+            _fabOffset = Offset(
+              constraints.maxWidth - 60,
+              constraints.maxHeight - 80,
+            );
+            _fabInitialized = true;
+          }
+          return Stack(
             children: [
-              if (_initializing)
-                const Center(child: CircularProgressIndicator())
-              else if (provider.messages.isEmpty)
-                Center(
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.forum_outlined, size: 64,
-                      color: Theme.of(context).colorScheme.outline),
-                  const SizedBox(height: 16),
-                  Text('开始新对话',
-                      style: Theme.of(context).textTheme.bodyLarge),
-                ]))
-              else
-                _buildMessageList(provider),
-              // Draggable tone float button
-              if (provider.currentConvId != null)
-                const ToneFloatButton(),
+              Column(children: [
+                if (provider.error != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: Row(children: [
+                      Icon(Icons.error_outline, size: 18,
+                          color: Theme.of(context).colorScheme.onErrorContainer),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(provider.error!,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.onErrorContainer,
+                              fontSize: 13))),
+                      GestureDetector(
+                        onTap: () {
+                          provider.clearError();
+                          _expandedSegments.clear();
+                        },
+                        child: Icon(Icons.close, size: 18,
+                            color: Theme.of(context).colorScheme.onErrorContainer),
+                      ),
+                    ]),
+                  ),
+                if (provider.showSummaryPrompt && provider.pendingSummaryIndex != null)
+                  _buildSummaryPromptBanner(provider),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      if (_initializing)
+                        const Center(child: CircularProgressIndicator())
+                      else if (provider.messages.isEmpty)
+                        Center(
+                            child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.forum_outlined, size: 64,
+                              color: Theme.of(context).colorScheme.outline),
+                          const SizedBox(height: 16),
+                          Text('开始新对话',
+                              style: Theme.of(context).textTheme.bodyLarge),
+                        ]))
+                      else
+                        _buildMessageList(provider),
+                      if (provider.currentConvId != null)
+                        const ToneFloatButton(),
+                    ],
+                  ),
+                ),
+                if (provider.quickReplies.isNotEmpty && !provider.isPending)
+                  _buildQuickReplyChips(provider),
+                MessageInput(
+                  onSend: (text) {
+                    provider.sendMessage(text);
+                    _pendingInputText = null;
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _scrollToBottom());
+                  },
+                  enabled: !provider.isPending,
+                  prefillText: _pendingInputText,
+                ),
+              ]),
+              // Draggable continue FAB
+              if (provider.currentConvId != null && !provider.isPending)
+                Positioned(
+                  left: _fabOffset.dx.clamp(0, constraints.maxWidth - 48),
+                  top: _fabOffset.dy.clamp(0, constraints.maxHeight - 48),
+                  child: GestureDetector(
+                    onTap: () => provider.sendContinueCommand(),
+                    onLongPressStart: (_) => _fabDragOrigin = Offset.zero,
+                    onLongPressMoveUpdate: (d) {
+                      setState(() {
+                        _fabOffset += d.offsetFromOrigin - _fabDragOrigin;
+                        _fabDragOrigin = d.offsetFromOrigin;
+                      });
+                    },
+                    onLongPressEnd: (_) => _fabDragOrigin = Offset.zero,
+                    child: Material(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      shape: const CircleBorder(),
+                      elevation: 6,
+                      shadowColor: Colors.black38,
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        alignment: Alignment.center,
+                        child: Icon(Icons.fast_forward,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer),
+                      ),
+                    ),
+                  ),
+                ),
             ],
-          ),
-        ),
-        // Quick reply bar
-        if (provider.showQuickReplies &&
-            provider.quickReplies.isNotEmpty &&
-            !provider.isPending)
-          _buildQuickReplyBar(provider),
-        MessageInput(
-          onSend: (text) {
-            provider.sendMessage(text);
-            WidgetsBinding.instance
-                .addPostFrameCallback((_) => _scrollToBottom());
-          },
-          enabled: !provider.isPending,
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildQuickReplyBar(ChatProvider provider) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-      child: Row(children: [
-        // Safe reply
-        Expanded(
-          child: _quickReplyBtn(
-            icon: Icons.shield_outlined,
-            label: provider.quickReplies[0],
-            color: theme.colorScheme.onSurfaceVariant,
-            bgColor: theme.colorScheme.surfaceVariant,
-            onTap: () => provider.sendQuickReply(provider.quickReplies[0]),
-          ),
-        ),
-        const SizedBox(width: 6),
-        // Novel reply
-        Expanded(
-          child: _quickReplyBtn(
-            icon: Icons.auto_awesome,
-            label: provider.quickReplies[1],
-            color: theme.colorScheme.onSecondaryContainer,
-            bgColor: theme.colorScheme.secondaryContainer,
-            onTap: () => provider.sendQuickReply(provider.quickReplies[1]),
-          ),
-        ),
-        const SizedBox(width: 6),
-        // Continue button
-        _quickReplyBtn(
-          icon: Icons.skip_next,
-          label: '继续',
-          color: theme.colorScheme.outline,
-          bgColor: Colors.transparent,
-          bordered: true,
-          onTap: () => provider.sendContinueCommand(),
-        ),
-      ]),
-    );
-  }
-
-  Widget _quickReplyBtn({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required Color bgColor,
-    bool bordered = false,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(8),
-          border: bordered ? Border.all(color: color.withOpacity(0.4)) : null,
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(label,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w500)),
-          ),
-        ]),
+          );
+        },
       ),
     );
   }
+
+  Widget _buildQuickReplyChips(ChatProvider provider) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+      child: Row(children: [
+        for (int i = 0; i < provider.quickReplies.length; i++)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(
+                  left: i == 0 ? 0 : 4, right: i == provider.quickReplies.length - 1 ? 0 : 4),
+              child: _QuickReplyChip(
+                index: i,
+                label: provider.quickReplies[i],
+                onTap: (text) => _fillInput(text),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  void _fillInput(String text) {
+    context.read<ChatProvider>().consumeQuickReply(0);
+    _pendingInputText = text;
+    setState(() {});
+  }
+
+  String? _pendingInputText;
+  Offset _fabOffset = const Offset(-60, -80);
+  bool _fabInitialized = false;
+  Offset _fabDragOrigin = Offset.zero;
 
   Widget _buildSummaryPromptBanner(ChatProvider provider) {
     final theme = Theme.of(context);
@@ -756,6 +760,78 @@ class _ChatPageState extends State<ChatPage> {
           ),
         );
       },
+    );
+  }
+}
+
+/// Quick reply chip: tap to fill input, long-press to preview full content.
+class _QuickReplyChip extends StatelessWidget {
+  final int index;
+  final String label;
+  final ValueChanged<String> onTap;
+
+  const _QuickReplyChip({
+    required this.index,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isFirst = index == 0;
+    return GestureDetector(
+      onTap: () => onTap(label),
+      onLongPress: () => _showPreview(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isFirst
+              ? theme.colorScheme.surfaceVariant
+              : theme.colorScheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(isFirst ? Icons.shield_outlined : Icons.auto_awesome,
+              size: 14,
+              color: isFirst
+                  ? theme.colorScheme.onSurfaceVariant
+                  : theme.colorScheme.onSecondaryContainer),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: isFirst
+                        ? theme.colorScheme.onSurfaceVariant
+                        : theme.colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.w500)),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  void _showPreview(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: SingleChildScrollView(
+            child: Text(label,
+                style: const TextStyle(fontSize: 15, height: 1.6)),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/affection_log.dart';
-import '../models/ai_persona.dart';
 import '../services/database_service.dart';
 
 class AffectionLogPage extends StatefulWidget {

@@ -9,6 +9,7 @@ class Conversation {
   final String? systemPrompt;
   final String? userPersona;
   final String? worldBackground;
+  final String? openingLine;
   final String? avatarPath;
   final int affection;
   final String mode; // 'summary' or 'bookmark'
@@ -22,6 +23,7 @@ class Conversation {
     this.systemPrompt,
     this.userPersona,
     this.worldBackground,
+    this.openingLine,
     this.avatarPath,
     this.affection = 30,
     this.mode = 'summary',
@@ -36,6 +38,7 @@ class Conversation {
       'system_prompt': systemPrompt,
       'user_persona': userPersona,
       'world_background': worldBackground,
+      'opening_line': openingLine,
       'avatar_path': avatarPath,
       'affection': affection,
       'mode': mode,
@@ -51,6 +54,7 @@ class Conversation {
       systemPrompt: map['system_prompt'] as String?,
       userPersona: map['user_persona'] as String?,
       worldBackground: map['world_background'] as String?,
+      openingLine: map['opening_line'] as String?,
       avatarPath: map['avatar_path'] as String?,
       affection: map['affection'] as int? ?? 30,
       mode: (map['mode'] as String?) ?? 'summary',
@@ -64,6 +68,7 @@ class Conversation {
     String? systemPrompt,
     String? userPersona,
     String? worldBackground,
+    String? openingLine,
     String? avatarPath,
     int? affection,
     String? mode,
@@ -77,6 +82,7 @@ class Conversation {
       systemPrompt: systemPrompt ?? this.systemPrompt,
       userPersona: userPersona ?? this.userPersona,
       worldBackground: worldBackground ?? this.worldBackground,
+      openingLine: openingLine ?? this.openingLine,
       avatarPath: avatarPath ?? this.avatarPath,
       affection: affection ?? this.affection,
       mode: mode ?? this.mode,

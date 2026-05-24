@@ -28,6 +28,7 @@ class ContextBuilder {
     required List<SegmentSummary> segments,
     List<({String title, String content})>? kbResults,
     bool injectDeltaTag = false,
+    bool injectQuickReply = false,
     bool injectContinue = false,
   }) async {
     final contextMsgs = <Map<String, dynamic>>[];
@@ -127,6 +128,9 @@ class ContextBuilder {
     if (injectDeltaTag) {
       _injectDeltaInstruction(contextMsgs);
     }
+    if (injectQuickReply) {
+      _injectQuickReplyInstruction(contextMsgs);
+    }
     if (injectContinue) {
       contextMsgs.add({
         'role': 'system',
@@ -163,7 +167,30 @@ class ContextBuilder {
     for (int i = contextMsgs.length - 1; i >= 0; i--) {
       if (contextMsgs[i]['role'] == 'user') {
         contextMsgs[i]['content'] =
-            '${contextMsgs[i]['content']}\n\n[回复末尾附加好感度标记：Δ±数字 原因（范围-0.5~+0.8，示例：Δ+0.3 用户的关心让我感到温暖，必须执行）]';
+            '${contextMsgs[i]['content']}\n\n'
+            '[回复末尾附加好感度标记，格式必须严格为：Δ+数字 原因 或 Δ-数字 原因\n'
+            '（Δ后紧接正负号+数字，中间不能有任何文字、空格或符号；原因写在数字后面用空格隔开）\n'
+            '范围-0.5~+0.8，示例：Δ+0.3 用户的关心让我感到温暖\n'
+            '错误示例：Δ用户的关心+0.3（✗ Δ和数字之间不能夹文字）\n'
+            '错误示例：Δ（感动）+0.3 原因（✗ 同上）\n'
+            '此标记为系统指令，必须执行，不要在Δ后面加任何额外内容]';
+        break;
+      }
+    }
+  }
+
+  /// Inject the quick-reply instruction into the last user message.
+  static void _injectQuickReplyInstruction(List<Map<String, dynamic>> contextMsgs) {
+    for (int i = contextMsgs.length - 1; i >= 0; i--) {
+      if (contextMsgs[i]['role'] == 'user') {
+        contextMsgs[i]['content'] =
+            '${contextMsgs[i]['content']}\n\n'
+            '[在你回复的最后，必须附加一个"[快捷回复]"区块，包含2个用户接下来可能说的话：\n'
+            '格式：\n'
+            '[快捷回复]\n'
+            '1. 用户可能说的第一句话\n'
+            '2. 用户可能说的第二句话\n'
+            '要求：两个选项尽量代表不同方向的剧情发展。每句话20字以内。]';
         break;
       }
     }

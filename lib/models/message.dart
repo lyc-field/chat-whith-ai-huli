@@ -8,6 +8,7 @@ class Message {
   final DateTime timestamp;
   final int? segmentIndex; // null = active, non-null = archived segment
   final bool isBookmarked;
+  final List<String>? quickReplies; // runtime-only, parsed from AI response
 
   Message({
     String? id,
@@ -17,6 +18,7 @@ class Message {
     DateTime? timestamp,
     this.segmentIndex,
     this.isBookmarked = false,
+    this.quickReplies,
   })  : id = id ?? const Uuid().v4(),
         timestamp = timestamp ?? DateTime.now();
 
@@ -44,7 +46,7 @@ class Message {
     );
   }
 
-  Message copyWith({String? content, int? segmentIndex, bool? isBookmarked}) {
+  Message copyWith({String? content, int? segmentIndex, bool? isBookmarked, List<String>? quickReplies}) {
     return Message(
       id: id,
       conversationId: conversationId,
@@ -53,6 +55,7 @@ class Message {
       timestamp: timestamp,
       segmentIndex: segmentIndex ?? this.segmentIndex,
       isBookmarked: isBookmarked ?? this.isBookmarked,
+      quickReplies: quickReplies ?? this.quickReplies,
     );
   }
 }

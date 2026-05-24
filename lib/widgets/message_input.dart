@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 class MessageInput extends StatefulWidget {
   final void Function(String text) onSend;
   final bool enabled;
+  final String? prefillText; // set to prefill the input, cleared after consumption
 
-  const MessageInput({super.key, required this.onSend, this.enabled = true});
+  const MessageInput({super.key, required this.onSend, this.enabled = true, this.prefillText});
 
   @override
   State<MessageInput> createState() => _MessageInputState();
@@ -13,6 +14,8 @@ class MessageInput extends StatefulWidget {
 class _MessageInputState extends State<MessageInput> {
   final _controller = TextEditingController();
   bool _hasText = false;
+
+  String? _lastPrefill;
 
   @override
   void initState() {
@@ -23,6 +26,17 @@ class _MessageInputState extends State<MessageInput> {
         setState(() => _hasText = has);
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(MessageInput old) {
+    super.didUpdateWidget(old);
+    if (widget.prefillText != null && widget.prefillText != _lastPrefill) {
+      _lastPrefill = widget.prefillText;
+      _controller.text = widget.prefillText!;
+      _controller.selection = TextSelection.fromPosition(
+          TextPosition(offset: _controller.text.length));
+    }
   }
 
   @override

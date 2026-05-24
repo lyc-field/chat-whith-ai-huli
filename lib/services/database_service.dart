@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -31,12 +32,12 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 17,
+        version: 18,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
     } catch (e) {
-      print('Database init error: $e. Trying recovery without data loss...');
+      debugPrint('Database init error: $e. Trying recovery without data loss...');
       // Try opening with current version to see if it works at all
       try {
         return await openDatabase(path, version: 17);
@@ -44,7 +45,7 @@ class DatabaseService {
       // Last resort: wipe and recreate
       try { await deleteDatabase(path); } catch (_) {}
       try { await File(path).delete(); } catch (_) {}
-      return await openDatabase(path, version: 17, onCreate: _onCreate);
+      return await openDatabase(path, version: 18, onCreate: _onCreate);
     }
   }
 
@@ -59,6 +60,7 @@ class DatabaseService {
         user_persona TEXT,
         world_background TEXT,
         avatar_path TEXT,
+        opening_line TEXT,
         affection INTEGER NOT NULL DEFAULT 30,
         mode TEXT NOT NULL DEFAULT 'summary'
       )
@@ -178,11 +180,10 @@ class DatabaseService {
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
         name TEXT NOT NULL,
+        identity TEXT NOT NULL DEFAULT '',
         personality TEXT NOT NULL DEFAULT '',
-        habits TEXT NOT NULL DEFAULT '',
         appearance TEXT NOT NULL DEFAULT '',
-        background TEXT NOT NULL DEFAULT '',
-        opening_line TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
         affection REAL NOT NULL DEFAULT 30.0,
         created_at TEXT NOT NULL
       )
@@ -391,6 +392,21 @@ class DatabaseService {
             "ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
       } catch (_) {}
     }
+    if (oldVersion < 18) {
+      // v18: add identity/notes to ai_personas, opening_line to conversations
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN opening_line TEXT");
+      } catch (_) {}
+    }
     if (oldVersion < 17) {
       try {
         await db.execute('''
@@ -408,7 +424,7 @@ class DatabaseService {
           )
         ''');
       } catch (e) {
-        print('KB FTS5 init failed (may not be supported on this device): $e');
+        debugPrint('KB FTS5 init failed (may not be supported on this device): $e');
       }
     }
   }
@@ -569,6 +585,12 @@ class DatabaseService {
 
   /// ─── Affection Log CRUD ────────
 
+  static Future<void> deleteAffectionLogs(String conversationId) async {
+    final db = await database;
+    await db.delete('affection_logs',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+  }
+
   static Future<void> insertAffectionLog(AffectionLog log) async {
     final db = await database;
     await db.insert('affection_logs', log.toMap(),
@@ -675,6 +697,12 @@ class DatabaseService {
   }
 
   /// ─── Emotion Log CRUD ────────
+
+  static Future<void> deleteEmotionLogs(String conversationId) async {
+    final db = await database;
+    await db.delete('emotion_logs',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+  }
 
   static Future<void> insertEmotionLog(EmotionLog log) async {
     final db = await database;

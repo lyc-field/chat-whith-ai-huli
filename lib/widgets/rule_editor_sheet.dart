@@ -320,10 +320,10 @@ Future<void> _importPersona(
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Row(children: [
-            const Icon(Icons.error, color: Colors.red, size: 22),
-            const SizedBox(width: 8),
-            const Text('导入失败'),
+          title: const Row(children: [
+            Icon(Icons.error, color: Colors.red, size: 22),
+            SizedBox(width: 8),
+            Text('导入失败'),
           ]),
           content: const Text('JSON 格式错误，请检查文件内容'),
           actions: [

@@ -134,13 +134,14 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       state = EmotionState.createDefault(conv.id, initialAffection: persona.affection, personaId: persona.id);
       await DatabaseService.insertPersonaEmotionState(state);
     }
+    final s = state; // promoted to non-null by the null check above
 
     if (!mounted) return;
     double affection = persona.affection;
-    double libidoOther = state.currentLibidoOther;
-    double aggressionOther = state.currentAggressionOther;
-    double libidoSelf = state.currentLibidoSelf;
-    double aggressionSelf = state.currentAggressionSelf;
+    double libidoOther = s.currentLibidoOther;
+    double aggressionOther = s.currentAggressionOther;
+    double libidoSelf = s.currentLibidoSelf;
+    double aggressionSelf = s.currentAggressionSelf;
 
     await showDialog<void>(
       context: context,
@@ -169,10 +170,10 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                         child: OutlinedButton.icon(
                           onPressed: () {
                             setDlgState(() {
-                              libidoOther = state!.baseLibidoOther;
-                              aggressionOther = state!.baseAggressionOther;
-                              libidoSelf = state!.baseLibidoSelf;
-                              aggressionSelf = state!.baseAggressionSelf;
+                              libidoOther = s.baseLibidoOther;
+                              aggressionOther = s.baseAggressionOther;
+                              libidoSelf = s.baseLibidoSelf;
+                              aggressionSelf = s.baseAggressionSelf;
                             });
                           },
                           icon: const Icon(Icons.restart_alt, size: 16),
@@ -194,14 +195,14 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                 ),
                 FilledButton(
                   onPressed: () async {
-                    state!.affection = affection;
-                    state!.currentLibidoOther = libidoOther;
-                    state!.currentAggressionOther = aggressionOther;
-                    state!.currentLibidoSelf = libidoSelf;
-                    state!.currentAggressionSelf = aggressionSelf;
-                    state!.lastUpdate = DateTime.now();
+                    s.affection = affection;
+                    s.currentLibidoOther = libidoOther;
+                    s.currentAggressionOther = aggressionOther;
+                    s.currentLibidoSelf = libidoSelf;
+                    s.currentAggressionSelf = aggressionSelf;
+                    s.lastUpdate = DateTime.now();
                     persona.affection = affection;
-                    await DatabaseService.updatePersonaEmotionState(state!);
+                    await DatabaseService.updatePersonaEmotionState(s);
                     await DatabaseService.updateAIPersona(persona);
                     if (mounted) {
                       Navigator.pop(ctx);
@@ -227,13 +228,14 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
       state = EmotionState.createDefault(conv.id, initialAffection: conv.affection.toDouble());
       await DatabaseService.insertEmotionState(state);
     }
+    final s = state; // promoted to non-null by the null check above
 
     if (!mounted) return;
-    double affection = state.affection;
-    double libidoOther = state.currentLibidoOther;
-    double aggressionOther = state.currentAggressionOther;
-    double libidoSelf = state.currentLibidoSelf;
-    double aggressionSelf = state.currentAggressionSelf;
+    double affection = s.affection;
+    double libidoOther = s.currentLibidoOther;
+    double aggressionOther = s.currentAggressionOther;
+    double libidoSelf = s.currentLibidoSelf;
+    double aggressionSelf = s.currentAggressionSelf;
 
     await showDialog<void>(
       context: context,
@@ -262,10 +264,10 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                         child: OutlinedButton.icon(
                           onPressed: () {
                             setDlgState(() {
-                              libidoOther = state!.baseLibidoOther;
-                              aggressionOther = state!.baseAggressionOther;
-                              libidoSelf = state!.baseLibidoSelf;
-                              aggressionSelf = state!.baseAggressionSelf;
+                              libidoOther = s.baseLibidoOther;
+                              aggressionOther = s.baseAggressionOther;
+                              libidoSelf = s.baseLibidoSelf;
+                              aggressionSelf = s.baseAggressionSelf;
                             });
                           },
                           icon: const Icon(Icons.restart_alt, size: 16),
@@ -287,13 +289,13 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                 ),
                 FilledButton(
                   onPressed: () async {
-                    state!.affection = affection;
-                    state!.currentLibidoOther = libidoOther;
-                    state!.currentAggressionOther = aggressionOther;
-                    state!.currentLibidoSelf = libidoSelf;
-                    state!.currentAggressionSelf = aggressionSelf;
-                    state!.lastUpdate = DateTime.now();
-                    await DatabaseService.updateEmotionState(state!);
+                    s.affection = affection;
+                    s.currentLibidoOther = libidoOther;
+                    s.currentAggressionOther = aggressionOther;
+                    s.currentLibidoSelf = libidoSelf;
+                    s.currentAggressionSelf = aggressionSelf;
+                    s.lastUpdate = DateTime.now();
+                    await DatabaseService.updateEmotionState(s);
                     await DatabaseService.updateConversation(
                         conv.copyWith(affection: affection.round()));
                     if (mounted) {
@@ -345,7 +347,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
             Text(label, style: const TextStyle(fontSize: 13)),
             const Spacer(),
             Text(value.toStringAsFixed(1),
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
           ],
         ),
         Slider(

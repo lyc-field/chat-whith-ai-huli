@@ -12,6 +12,7 @@ class PersonaIO {
   static String buildExportJson({
     required List<AIPersona> selectedPersonas,
     required String? userPersona,
+    required String? openingLine,
     required String? worldBackground,
   }) {
     final map = <String, dynamic>{
@@ -20,14 +21,16 @@ class PersonaIO {
       'exported_at': DateTime.now().toIso8601String(),
       'personas': selectedPersonas.map((p) => {
         'name': p.name,
+        'identity': p.identity,
         'personality': p.personality,
-        'habits': p.habits,
         'appearance': p.appearance,
-        'background': p.background,
-        'opening_line': p.openingLine,
+        'notes': p.notes,
       }).toList(),
       'user_persona': (userPersona != null && userPersona.trim().isNotEmpty)
           ? userPersona.trim()
+          : null,
+      'opening_line': (openingLine != null && openingLine.trim().isNotEmpty)
+          ? openingLine.trim()
           : null,
       'world_background': (worldBackground != null && worldBackground.trim().isNotEmpty)
           ? worldBackground.trim()
@@ -57,11 +60,11 @@ class PersonaIO {
 
   /// Parse and validate an imported JSON string.
   /// Returns null error on success.
-  static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? error}) parseImportJson(String json) {
+  static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? openingLine, String? error}) parseImportJson(String json) {
     try {
       final map = jsonDecode(json) as Map<String, dynamic>;
       if (map['app'] != _appMarker) {
-        return (personas: [], userPersona: null, worldBackground: null, error: '文件格式不匹配，仅支持导入本应用导出的角色包');
+        return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式不匹配，仅支持导入本应用导出的角色包');
       }
 
       final personas = <AIPersona>[];
@@ -71,11 +74,10 @@ class PersonaIO {
           final pm = p as Map<String, dynamic>;
           personas.add(AIPersona(
             name: (pm['name'] as String?) ?? '',
+            identity: (pm['identity'] as String?) ?? '',
             personality: (pm['personality'] as String?) ?? '',
-            habits: (pm['habits'] as String?) ?? '',
             appearance: (pm['appearance'] as String?) ?? '',
-            background: (pm['background'] as String?) ?? '',
-            openingLine: (pm['opening_line'] as String?) ?? '',
+            notes: (pm['notes'] as String?) ?? '',
           ));
         }
       }
@@ -84,10 +86,11 @@ class PersonaIO {
         personas: personas,
         userPersona: map['user_persona'] as String?,
         worldBackground: map['world_background'] as String?,
+        openingLine: map['opening_line'] as String?,
         error: null,
       );
     } catch (_) {
-      return (personas: [], userPersona: null, worldBackground: null, error: 'JSON 格式错误，无法解析该文件');
+      return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: 'JSON 格式错误，无法解析该文件');
     }
   }
 

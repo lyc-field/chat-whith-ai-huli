@@ -18,15 +18,15 @@ class PersonaSettingsPage extends StatefulWidget {
 class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   late final TextEditingController _userController;
   late final TextEditingController _worldBgController;
+  late final TextEditingController _openingLineCtrl;
   int _affectionSlider = 30;
 
   // AI persona field controllers — recreated when persona switches
   late TextEditingController _nameCtrl;
+  late TextEditingController _identityCtrl;
   late TextEditingController _personalityCtrl;
-  late TextEditingController _habitsCtrl;
   late TextEditingController _appearanceCtrl;
-  late TextEditingController _backgroundCtrl;
-  late TextEditingController _openingLineCtrl;
+  late TextEditingController _notesCtrl;
   late final TextEditingController _legacyPromptCtrl;
 
   @override
@@ -35,8 +35,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     final chat = context.read<ChatProvider>();
     _userController = TextEditingController(text: chat.userPersona ?? '');
     _worldBgController = TextEditingController(text: chat.worldBackground ?? '');
+    _openingLineCtrl = TextEditingController(text: chat.openingLine ?? '');
     _legacyPromptCtrl = TextEditingController(text: chat.systemPrompt ?? '');
-    _affectionSlider = chat.affection.clamp(-15, 50);
+    _affectionSlider = chat.affection.clamp(15, 50);
 
     final pp = context.read<PersonaProvider>();
     _initPersonaControllers(pp.currentPersona);
@@ -44,20 +45,18 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
 
   void _initPersonaControllers(AIPersona? p) {
     _nameCtrl = TextEditingController(text: p?.name ?? '');
+    _identityCtrl = TextEditingController(text: p?.identity ?? '');
     _personalityCtrl = TextEditingController(text: p?.personality ?? '');
-    _habitsCtrl = TextEditingController(text: p?.habits ?? '');
     _appearanceCtrl = TextEditingController(text: p?.appearance ?? '');
-    _backgroundCtrl = TextEditingController(text: p?.background ?? '');
-    _openingLineCtrl = TextEditingController(text: p?.openingLine ?? '');
+    _notesCtrl = TextEditingController(text: p?.notes ?? '');
   }
 
   void _disposePersonaControllers() {
     _nameCtrl.dispose();
+    _identityCtrl.dispose();
     _personalityCtrl.dispose();
-    _habitsCtrl.dispose();
     _appearanceCtrl.dispose();
-    _backgroundCtrl.dispose();
-    _openingLineCtrl.dispose();
+    _notesCtrl.dispose();
   }
 
   // Call when any AI persona field changes — debounced auto-save
@@ -65,25 +64,22 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     final p = pp.currentPersona;
     if (p == null) return;
     p.name = _nameCtrl.text.trim();
+    p.identity = _identityCtrl.text.trim();
     p.personality = _personalityCtrl.text.trim();
-    p.habits = _habitsCtrl.text.trim();
     p.appearance = _appearanceCtrl.text.trim();
-    p.background = _backgroundCtrl.text.trim();
-    p.openingLine = _openingLineCtrl.text.trim();
+    p.notes = _notesCtrl.text.trim();
     pp.autoSave(p);
   }
 
   void _switchToPersona(PersonaProvider pp, int index) {
     if (index == pp.currentIndex) return;
-    // Flush pending save for current persona
     final cp = pp.currentPersona;
     if (cp != null) {
       cp.name = _nameCtrl.text.trim();
+      cp.identity = _identityCtrl.text.trim();
       cp.personality = _personalityCtrl.text.trim();
-      cp.habits = _habitsCtrl.text.trim();
       cp.appearance = _appearanceCtrl.text.trim();
-      cp.background = _backgroundCtrl.text.trim();
-      cp.openingLine = _openingLineCtrl.text.trim();
+      cp.notes = _notesCtrl.text.trim();
       pp.saveImmediately(cp);
     }
     pp.selectPersona(index);
@@ -98,27 +94,28 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     final isLegacy = pp.personas.isEmpty;
 
     if (isLegacy) {
-      // Old format: save raw system prompt
       await chat.setSystemPrompt(_legacyPromptCtrl.text);
     } else {
-      // New format: save persona fields and build system prompt
       final cp = pp.currentPersona;
       if (cp != null) {
         cp.name = _nameCtrl.text.trim();
+        cp.identity = _identityCtrl.text.trim();
         cp.personality = _personalityCtrl.text.trim();
-        cp.habits = _habitsCtrl.text.trim();
         cp.appearance = _appearanceCtrl.text.trim();
-        cp.background = _backgroundCtrl.text.trim();
-        cp.openingLine = _openingLineCtrl.text.trim();
+        cp.notes = _notesCtrl.text.trim();
         await pp.saveImmediately(cp);
         final prompt = cp.buildPrompt();
         await chat.setSystemPrompt(prompt);
       }
     }
 
-    if (chat.systemPrompt == null || chat.systemPrompt!.isEmpty) {
+    // Allow affection adjustment as long as no user messages have been sent
+    if (chat.messages.where((m) => m.role == 'user').isEmpty) {
       chat.setInitialAffection(_affectionSlider);
     }
+    // OpeningLine must be set before userPersona/worldBackground because
+    // it may create the conversation, which the latter two then persist to.
+    await chat.setOpeningLine(_openingLineCtrl.text);
     await chat.setUserPersona(_userController.text);
     await chat.setWorldBackground(_worldBgController.text);
     if (chat.isNewFormat) await chat.syncPersonaState();
@@ -134,21 +131,18 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   Future<void> _convertToNewFormat(PersonaProvider pp) async {
     final oldPrompt = _legacyPromptCtrl.text.trim();
     if (oldPrompt.isEmpty) {
-      // Just create a blank default persona
       await pp.createPersona('默认角色');
     } else {
-      // Create a persona with the old prompt as personality
       await pp.createPersona('默认角色');
       final cp = pp.currentPersona;
       if (cp != null) {
-        // Use first line as name if short enough
         final firstLine = oldPrompt.split('\n').first.trim();
         if (firstLine.length <= 30) {
           cp.name = firstLine;
         } else {
           cp.name = firstLine.substring(0, 30);
         }
-        cp.background = oldPrompt;
+        cp.personality = oldPrompt;
         await pp.saveImmediately(cp);
       }
     }
@@ -167,22 +161,19 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   }
 
   Future<void> _createNewPersona(PersonaProvider pp) async {
-    // Flush current persona before creating new one
     final cp = pp.currentPersona;
     if (cp != null) {
       cp.name = _nameCtrl.text.trim();
+      cp.identity = _identityCtrl.text.trim();
       cp.personality = _personalityCtrl.text.trim();
-      cp.habits = _habitsCtrl.text.trim();
       cp.appearance = _appearanceCtrl.text.trim();
-      cp.background = _backgroundCtrl.text.trim();
-      cp.openingLine = _openingLineCtrl.text.trim();
+      cp.notes = _notesCtrl.text.trim();
       await pp.saveImmediately(cp);
     }
     await pp.createPersona('新角色');
     _disposePersonaControllers();
     _initPersonaControllers(pp.currentPersona);
     setState(() {});
-    // Auto-focus the name field so user can rename immediately
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _nameCtrl.selection = TextSelection(
           baseOffset: 0, extentOffset: _nameCtrl.text.length);
@@ -193,6 +184,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   void dispose() {
     _userController.dispose();
     _worldBgController.dispose();
+    _openingLineCtrl.dispose();
     _legacyPromptCtrl.dispose();
     _disposePersonaControllers();
     super.dispose();
@@ -256,73 +248,23 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           ] else ...[
             // ── 新版格式（结构化表单） ──
             Text('AI 角色人设', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
-
-            // Persona selector chips
-            SizedBox(
-              height: 36,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: pp.personas.length + 1,
-                itemBuilder: (_, i) {
-                  if (i == pp.personas.length) {
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: ActionChip(
-                        avatar: const Icon(Icons.add, size: 16),
-                        label: const Text('新建'),
-                        onPressed: () => _createNewPersona(pp),
-                      ),
-                    );
-                  }
-                  final isSelected = i == pp.currentIndex;
-                  final p = pp.personas[i];
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text(p.name.isNotEmpty ? p.name : '未命名',
-                          style: TextStyle(
-                              fontWeight:
-                                  isSelected ? FontWeight.w600 : FontWeight.w400)),
-                      selected: isSelected,
-                      onSelected: (_) => _switchToPersona(pp, i),
-                    ),
-                  );
-                },
-              ),
-            ),
             const SizedBox(height: 12),
 
             _buildField('角色名称', _nameCtrl, maxLines: 1,
                 hint: '例如：眠眠', onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('性格', _personalityCtrl, maxLines: 2,
-                hint: '例如：温柔善良，偶尔傲娇，喜欢撒娇...',
+            _buildField('身份信息', _identityCtrl, maxLines: 2,
+                hint: '例如：生活在神社里的百年狐妖，神社的守护者...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('习惯', _habitsCtrl, maxLines: 2,
-                hint: '例如：喜欢蹭人的手，说话时尾巴会摇来摇去...',
+            _buildField('性格习惯', _personalityCtrl, maxLines: 3,
+                hint: '例如：温柔善良，偶尔傲娇，喜欢撒娇，说话时尾巴会摇来摇去...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('外观', _appearanceCtrl, maxLines: 2,
-                hint: '例如：橙色狐狸耳朵，毛茸茸的大尾巴，穿着和服...',
+            _buildField('外观外貌', _appearanceCtrl, maxLines: 2,
+                hint: '例如：橙色狐狸耳朵，毛茸茸的大尾巴，穿着白色和服，紫色眼睛...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('背景', _backgroundCtrl, maxLines: 3,
-                hint: '例如：生活在神社里的百年狐妖，一直在等待一个有缘人...',
-                onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('开场白', _openingLineCtrl, maxLines: 2,
-                hint: '例如：你推开神社的门，看到一只狐狸正趴在台阶上晒太阳...',
+            _buildField('补充信息', _notesCtrl, maxLines: 3,
+                hint: '例如：喜欢晒太阳，讨厌下雨天，一直等待有缘人的到来...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
 
-            if (pp.personas.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => _deleteCurrentPersona(pp),
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('删除当前角色'),
-                  style: TextButton.styleFrom(foregroundColor: Colors.red.shade400),
-                ),
-              ),
-            ],
           ],
 
           const Divider(height: 32),
@@ -339,6 +281,23 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
             minLines: 2,
             decoration: const InputDecoration(
               hintText: '例如：一位迷路的旅人，看起来很疲惫…\n留空则不注入',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // ── 开场白 ──
+          Text('开场白', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text('开始聊天时由系统自动输出到聊天界面，在用户发送第一条消息前显示',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _openingLineCtrl,
+            maxLines: 4,
+            minLines: 2,
+            decoration: const InputDecoration(
+              hintText: '例如：你推开神社的门，看到一只狐狸正趴在台阶上晒太阳...\n留空则不注入',
               border: OutlineInputBorder(),
             ),
           ),
@@ -362,17 +321,20 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           const SizedBox(height: 24),
 
           // ── 初始好感度 ──
-          if (chat.systemPrompt == null || chat.systemPrompt!.isEmpty) ...[
-            if (chat.affectionEnabled) ...[
+          if (chat.affectionEnabled) ...[
+            if (chat.messages.where((m) => m.role == 'user').isEmpty) ...[
               Text('初始好感度', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text('范围 15~50，保存后由系统根据对话内容自动调整',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
               const SizedBox(height: 8),
               Row(children: [
                 Expanded(
                   child: Slider(
                     value: _affectionSlider.toDouble(),
-                    min: -15,
+                    min: 15,
                     max: 50,
-                    divisions: 65,
+                    divisions: 35,
                     label: '$_affectionSlider',
                     onChanged: (v) =>
                         setState(() => _affectionSlider = v.round()),
@@ -383,11 +345,10 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                     child: Text('$_affectionSlider',
                         style: theme.textTheme.bodySmall)),
               ]),
-            ],
-          ] else ...[
-            if (chat.affectionEnabled)
+            ] else ...[
               Text('当前好感度：${chat.affection}（由系统自动管理）',
                   style: TextStyle(color: theme.colorScheme.outline)),
+            ],
           ],
 
           const SizedBox(height: 16),
@@ -465,32 +426,30 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
 
       final pp = context.read<PersonaProvider>();
 
-      // Flush current persona before importing
       final cp = pp.currentPersona;
       if (cp != null) {
         cp.name = _nameCtrl.text.trim();
+        cp.identity = _identityCtrl.text.trim();
         cp.personality = _personalityCtrl.text.trim();
-        cp.habits = _habitsCtrl.text.trim();
         cp.appearance = _appearanceCtrl.text.trim();
-        cp.background = _backgroundCtrl.text.trim();
-      cp.openingLine = _openingLineCtrl.text.trim();
+        cp.notes = _notesCtrl.text.trim();
         await pp.saveImmediately(cp);
       }
 
-      // Import AI personas
       for (final p in parsed.personas) {
         await pp.importPersona(p);
       }
 
-      // Fill user persona and world background
       if (parsed.userPersona != null && parsed.userPersona!.isNotEmpty) {
         _userController.text = parsed.userPersona!;
       }
       if (parsed.worldBackground != null && parsed.worldBackground!.isNotEmpty) {
         _worldBgController.text = parsed.worldBackground!;
       }
+      if (parsed.openingLine != null && parsed.openingLine!.isNotEmpty) {
+        _openingLineCtrl.text = parsed.openingLine!;
+      }
 
-      // Switch to the first imported persona
       if (parsed.personas.isNotEmpty) {
         pp.selectPersona(pp.personas.length - parsed.personas.length);
       }
@@ -530,7 +489,6 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       builder: (_) => const ExportPersonaDialog(),
     ).then((json) {
       if (json == null || json.isEmpty || !mounted) return;
-      // Defer to next frame so export dialog is fully dismissed
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _showFileNameDialog(json);
       });

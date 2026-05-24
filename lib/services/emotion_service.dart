@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../models/emotion_state.dart';
 import 'deepseek_service.dart';
 import 'json_utils.dart';
@@ -296,7 +297,7 @@ $historySnippet
       final clamped = _clampDeltas(deltas, state.turnCount);
       return _ensureNonZero(clamped, state);
     } catch (e) {
-      print('[EmotionService] 情感分析失败，使用默认值: $e');
+      debugPrint('[EmotionService] 情感分析失败，使用默认值: $e');
       return _defaultResponse();
     }
   }

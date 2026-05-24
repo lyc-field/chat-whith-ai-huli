@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:archive/archive.dart';
 import 'package:flutter/services.dart';
-import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart';
 import 'database_service.dart';
@@ -39,9 +39,9 @@ class KnowledgeBase {
       }
       try { await destFile.delete(); } catch (_) {}
       final total = await DatabaseService.kbChunkCount();
-      print('KnowledgeBase: pre-built DB loaded, $total chunks');
+      debugPrint('KnowledgeBase: pre-built DB loaded, $total chunks');
     } catch (e) {
-      print('KnowledgeBase: no pre-built DB found, will need manual import ($e)');
+      debugPrint('KnowledgeBase: no pre-built DB found, will need manual import ($e)');
     }
   }
 
@@ -165,7 +165,6 @@ class KnowledgeBase {
       ]);
       if (result.exitCode != 0) return;
 
-      final imported = await DatabaseService.getImportedFiles();
       await for (final entity in tmpDir.list(recursive: true)) {
         if (entity is File && entity.path.endsWith('.txt')) {
           await _importTextFile(entity.path, '$path7z :: ${entity.path.split(Platform.pathSeparator).last}');

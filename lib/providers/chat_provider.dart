@@ -11,7 +11,6 @@ import '../services/auth_service.dart';
 import '../services/emotion_service.dart';
 import '../services/context_builder.dart';
 import '../services/knowledge_base.dart';
-import '../services/json_utils.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
@@ -30,6 +29,7 @@ class ChatProvider extends ChangeNotifier {
   String? _systemPrompt;
   String? _userPersona;
   String? _worldBackground;
+  String? _openingLine;
   String _mode = 'summary';
 
   List<Message> _messages = [];
@@ -50,7 +50,9 @@ class ChatProvider extends ChangeNotifier {
 
   // Quick reply
   List<String> _quickReplies = [];
-  bool _showQuickReplies = false;
+  int? _quickReplyMessageIndex; // which message the replies belong to
+  int _roundCount = 0;
+  final int _roundsUntilAffection = 5; // first N rounds: no affection changes
 
   // Auto-continue mode (AI keeps talking)
   bool _isContinuing = false;
@@ -64,6 +66,7 @@ class ChatProvider extends ChangeNotifier {
   String? get systemPrompt => _systemPrompt;
   String? get userPersona => _userPersona;
   String? get worldBackground => _worldBackground;
+  String? get openingLine => _openingLine;
   String get mode => _mode;
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
@@ -79,9 +82,12 @@ class ChatProvider extends ChangeNotifier {
   bool get isSelfDestructMode =>
       _emotionState != null && EmotionTables.isSelfDestructMode(_emotionState!);
   List<String> get quickReplies => _quickReplies;
-  bool get showQuickReplies => _showQuickReplies;
+  int? get quickReplyMessageIndex => _quickReplyMessageIndex;
   bool get isContinuing => _isContinuing;
-  bool get isNewFormat => _personaProvider != null && _personaProvider!.personas.isNotEmpty;
+  bool get isNewFormat {
+    final pp = _personaProvider;
+    return pp != null && pp.personas.isNotEmpty;
+  }
   String? get currentPersonaId => _personaProvider?.currentPersona?.id;
 
   ChatProvider(this._convProvider, [this._personaProvider]);
@@ -109,21 +115,6 @@ class ChatProvider extends ChangeNotifier {
     cp.affection = _affection;
     await DatabaseService.updateAIPersona(cp);
     await DatabaseService.updatePersonaEmotionState(_emotionState!);
-  }
-
-  /// Write back when persona has changed (handles table switch).
-  Future<void> _flushPersonaStateForNewFormat() async {
-    if (!isNewFormat) return;
-    final cp = _personaProvider!.currentPersona!;
-    cp.affection = _affection;
-    await DatabaseService.updateAIPersona(cp);
-    // Check if persona emotion state exists, if not insert
-    final existing = await DatabaseService.getPersonaEmotionState(_currentConvId!, cp.id);
-    if (existing != null) {
-      await DatabaseService.updatePersonaEmotionState(_emotionState!);
-    } else {
-      await DatabaseService.insertPersonaEmotionState(_emotionState!);
-    }
   }
 
   void updateConvProvider(ConversationProvider provider) {
@@ -196,12 +187,14 @@ class ChatProvider extends ChangeNotifier {
     _systemPrompt = conv.systemPrompt;
     _userPersona = conv.userPersona;
     _worldBackground = conv.worldBackground;
+    _openingLine = conv.openingLine;
     _mode = conv.mode;
     _error = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
-    _showQuickReplies = false;
     _quickReplies = [];
+    _quickReplyMessageIndex = null;
+    _roundCount = _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
     await (_personaProvider?.loadPersonas(convId) ?? Future.value());
 
     if (isNewFormat) {
@@ -252,6 +245,13 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearError() {
+    _error = null;
+    _isPending = false;
+    _streamingContent = '';
+    notifyListeners();
+  }
+
   void newConversation() {
     _currentConvId = null;
     _personaProvider?.prepareForConversation('');
@@ -263,10 +263,12 @@ class ChatProvider extends ChangeNotifier {
     _systemPrompt = null;
     _userPersona = null;
     _worldBackground = null;
+    _openingLine = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
-    _showQuickReplies = false;
     _quickReplies = [];
+    _quickReplyMessageIndex = null;
+    _roundCount = 0;
     _affection = 30.0;
     _previousRawAffection = 30.0;
     _emotionState = null;
@@ -296,7 +298,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void setInitialAffection(int value) {
-    _affection = value.clamp(-15, 100).toDouble();
+    _affection = value.clamp(15, 50).toDouble();
     _previousRawAffection = _affection;
 
     if (_emotionState != null) {
@@ -373,6 +375,77 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setOpeningLine(String text) async {
+    final trimmed = text.trim();
+    _openingLine = trimmed.isEmpty ? null : trimmed;
+    if (_currentConvId != null) {
+      final conv = await DatabaseService.getConversation(_currentConvId!);
+      final updated = conv.copyWith(
+        openingLine: _openingLine,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateConversation(updated);
+      notifyListeners();
+      return;
+    }
+    if (_openingLine == null || _openingLine!.isEmpty) return;
+
+    // New conversation — create one so the opening line appears in chat immediately.
+    // Mirror the conversation-creation logic from sendMessage().
+    final conv = await _convProvider.createConversation(
+        initialAffection: _affection.round(), mode: _mode);
+    _currentConvId = conv.id;
+
+    // Save system prompt if set
+    if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
+      await DatabaseService.updateConversation(
+          conv.copyWith(systemPrompt: _systemPrompt));
+    }
+
+    // Persist pending persona
+    final pp = _personaProvider;
+    if (pp != null) {
+      if (pp.personas.length == 1 && pp.personas.first.conversationId.isEmpty) {
+        final pending = pp.personas.first;
+        final persisted = AIPersona(
+          id: pending.id,
+          conversationId: _currentConvId!,
+          name: pending.name,
+          identity: pending.identity,
+          personality: pending.personality,
+          appearance: pending.appearance,
+          notes: pending.notes,
+          createdAt: pending.createdAt,
+        );
+        await DatabaseService.insertAIPersona(persisted);
+        pp.replaceWithPersisted([persisted], _currentConvId!);
+      } else {
+        pp.prepareForConversation(_currentConvId!);
+        await pp.loadPersonas(_currentConvId!);
+        await pp.ensureDefaultPersona();
+      }
+    }
+
+    // Save openingLine to conversation
+    await DatabaseService.updateConversation(
+        conv.copyWith(openingLine: _openingLine));
+
+    // Create emotion state (mirrors sendMessage's new-conversation block)
+    _emotionState = EmotionState.createDefault(_currentConvId!,
+        initialAffection: _affection);
+    await DatabaseService.insertEmotionState(_emotionState!);
+
+    // Insert opening line as first message
+    final openingMsg = Message(
+      conversationId: _currentConvId!,
+      role: 'assistant',
+      content: _openingLine!,
+    );
+    _messages.add(openingMsg);
+    await DatabaseService.insertMessage(openingMsg);
+    notifyListeners();
+  }
+
   Future<void> editMessage(int index, String newContent) async {
     if (index < 0 || index >= _messages.length) return;
     final msg = _messages[index].copyWith(content: newContent.trim());
@@ -398,6 +471,8 @@ class ChatProvider extends ChangeNotifier {
     }
     await DatabaseService.deleteMessages(_currentConvId!);
     await DatabaseService.deleteSegmentSummaries(_currentConvId!);
+    await DatabaseService.deleteAffectionLogs(_currentConvId!);
+    await DatabaseService.deleteEmotionLogs(_currentConvId!);
     _messages = [];
     _segments = [];
     _isPending = false;
@@ -436,7 +511,6 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void clearQuickReplies() {
-    _showQuickReplies = false;
     _quickReplies = [];
     notifyListeners();
   }
@@ -465,6 +539,54 @@ class ChatProvider extends ChangeNotifier {
   SegmentSummary? getSegment(int segmentIndex) {
     final idx = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
     return idx == -1 ? null : _segments[idx];
+  }
+
+  /// Stream an assistant reply from the API, save to DB, and update in-memory display.
+  /// Returns the raw full response content, or null on error (error already set on provider).
+  Future<String?> _streamAssistantReply({
+    required List<Map<String, dynamic>> contextMsgs,
+    required double temperature,
+  }) async {
+    final assistantMsg = Message(
+      conversationId: _currentConvId!,
+      role: 'assistant',
+      content: '',
+    );
+    _messages.add(assistantMsg);
+    notifyListeners();
+
+    try {
+      final fullContent = await _service!.streamChatRaw(
+        contextMessages: contextMsgs,
+        temperature: temperature,
+        onToken: (token) {
+          _streamingContent += token;
+          var display = _streamingContent;
+          final deltaMatch =
+              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
+          if (deltaMatch != null) {
+            display = display.substring(0, deltaMatch.start).trimRight();
+          }
+          _messages[_messages.length - 1] =
+              assistantMsg.copyWith(content: display);
+          notifyListeners();
+        },
+        onDone: () => _streamingContent = '',
+      );
+
+      final savedMsg = assistantMsg.copyWith(content: fullContent);
+      _messages[_messages.length - 1] = savedMsg;
+      await DatabaseService.insertMessage(savedMsg);
+      return fullContent;
+    } catch (e) {
+      _error = '请求失败: $e';
+      if (_messages.isNotEmpty &&
+          _messages.last.role == 'assistant' &&
+          _messages.last.content.isEmpty) {
+        _messages.removeLast();
+      }
+      return null;
+    }
   }
 
   Future<void> sendMessage(String text) async {
@@ -501,11 +623,10 @@ class ChatProvider extends ChangeNotifier {
             id: pending.id,
             conversationId: _currentConvId!,
             name: pending.name,
+            identity: pending.identity,
             personality: pending.personality,
-            habits: pending.habits,
             appearance: pending.appearance,
-            background: pending.background,
-            openingLine: pending.openingLine,
+            notes: pending.notes,
             createdAt: pending.createdAt,
           );
           await DatabaseService.insertAIPersona(persisted);
@@ -520,6 +641,21 @@ class ChatProvider extends ChangeNotifier {
       _emotionState = EmotionState.createDefault(_currentConvId!,
           initialAffection: _affection);
       await DatabaseService.insertEmotionState(_emotionState!);
+
+      // Save openingLine to conversation
+      if (_openingLine != null && _openingLine!.isNotEmpty) {
+        final convWithLine = conv.copyWith(openingLine: _openingLine);
+        await DatabaseService.updateConversation(convWithLine);
+        // Inject opening line as first assistant message
+        final openingMsg = Message(
+          conversationId: _currentConvId!,
+          role: 'assistant',
+          content: _openingLine!,
+        );
+        _messages.add(openingMsg);
+        await DatabaseService.insertMessage(openingMsg);
+        _openingLine = null; // consumed
+      }
     }
 
     final userMsg = Message(
@@ -541,17 +677,11 @@ class ChatProvider extends ChangeNotifier {
       await _convProvider.updateTitle(_currentConvId!, title);
     }
 
-    final assistantMsg = Message(
-      conversationId: _currentConvId!,
-      role: 'assistant',
-      content: '',
-    );
-    _messages.add(assistantMsg);
-    notifyListeners();
-
     // Build context via shared ContextBuilder
+    _roundCount++;
     final safeMode = await AuthService.getAdminSafeMode();
-    final doAffectionJudge = _affectionEnabled && !safeMode;
+    final doAffectionJudge = _affectionEnabled && !safeMode &&
+        _roundCount > _roundsUntilAffection;
     // Search knowledge base
     final kbResults = await KnowledgeBase.search(text.trim(), limit: 3);
     final contextMsgs = await ContextBuilder.build(
@@ -567,39 +697,28 @@ class ChatProvider extends ChangeNotifier {
       segments: _segments,
       kbResults: kbResults,
       injectDeltaTag: doAffectionJudge,
+      injectQuickReply: true,
+    );
+
+    final temp = 0.5 + (_affection + 15) / 115 * 1.3;
+    final fullContent = await _streamAssistantReply(
+      contextMsgs: contextMsgs,
+      temperature: temp,
     );
 
     double? inlineDelta;
     String? inlineReason;
 
-    try {
-      // Temperature scales with affection
-      final temp = 0.5 + (_affection + 15) / 115 * 1.3;
-      final fullContent = await _service!.streamChatRaw(
-        contextMessages: contextMsgs,
-        temperature: temp,
-        onToken: (token) {
-          _streamingContent += token;
-          var display = _streamingContent;
-          // Hide trailing Δ tag during streaming.
-          // Matches Δ±0, Δ+0.2, Δ-0, Δ0 etc. (both ± and ASCII +/-).
-          final deltaMatch =
-              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
-          if (deltaMatch != null) {
-            display = display.substring(0, deltaMatch.start).trimRight();
-          }
-          _messages[_messages.length - 1] =
-              assistantMsg.copyWith(content: display);
-          notifyListeners();
-        },
-        onDone: () => _streamingContent = '',
-        onError: (err) => _error = err,
-      );
-
+    if (fullContent != null) {
       // Parse and strip the Δ tag, apply immediately
       var cleanContent = fullContent;
-      final inlineMatch =
+      var inlineMatch =
           RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
+      if (inlineMatch == null) {
+        // Fallback: AI may have inserted text between Δ and the number
+        inlineMatch =
+            RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$').firstMatch(fullContent);
+      }
       if (inlineMatch != null) {
         inlineDelta =
             (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
@@ -608,9 +727,12 @@ class ChatProvider extends ChangeNotifier {
             cleanContent.replaceFirst(inlineMatch.group(0)!, '').trimRight();
         if (cleanContent.isEmpty) cleanContent = fullContent;
       }
-      final savedMsg = assistantMsg.copyWith(content: cleanContent);
-      _messages[_messages.length - 1] = savedMsg;
-      await DatabaseService.insertMessage(savedMsg);
+      // Update display if Δ tag was stripped from content
+      if (cleanContent != fullContent) {
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(content: cleanContent);
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+      }
 
       // Update affection from inline Δ tag (skip if safe mode)
       if (inlineDelta != null && !safeMode) {
@@ -637,12 +759,24 @@ class ChatProvider extends ChangeNotifier {
       final updatedConv = conv.copyWith(
           updatedAt: DateTime.now(), affection: _affection.round());
       await DatabaseService.updateConversation(updatedConv);
-    } catch (e) {
-      _error = '请求失败: $e';
-      if (_messages.isNotEmpty &&
-          _messages.last.role == 'assistant' &&
-          _messages.last.content.isEmpty) {
-        _messages.removeLast();
+
+      // Parse quick replies embedded in AI response
+      final qr = _parseQuickReplies(cleanContent);
+      if (qr != null) {
+        // Strip quick-reply block from already Δ-cleaned content
+        final qrIdx = cleanContent.indexOf('\n[快捷回复]');
+        cleanContent = cleanContent.substring(0, qrIdx).trimRight();
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(
+          content: cleanContent,
+          quickReplies: qr,
+        );
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+        _quickReplies = qr;
+        _quickReplyMessageIndex = _messages.length - 1;
+      } else {
+        _quickReplies = [];
+        _quickReplyMessageIndex = null;
       }
     }
 
@@ -653,28 +787,33 @@ class ChatProvider extends ChangeNotifier {
 
     notifyListeners();
 
-    // Trigger emotion analysis (unconscious LLM) every round
-    if (inlineDelta != null) {
-      // Δ tag already handled affection — just update emotion values
-      _previousRawAffection = _affection;
-    }
-    if (_affectionEnabled &&
-        _analyzer != null &&
-        _emotionState != null &&
-        !safeMode) {
-      Future.delayed(const Duration(milliseconds: 300),
-          () => _doEmotionAnalysis(text.trim()));
-    }
-    // Generate quick replies via separate API call (every round, all providers)
-    if (_service != null) {
-      final aiMsgs = _messages
-          .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
-          .toList();
-      if (aiMsgs.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 400),
-            () => _generateQuickReplies(aiMsgs.last.content));
+    // Post-processing only on success
+    if (fullContent != null) {
+      if (inlineDelta != null) {
+        _previousRawAffection = _affection;
+      }
+      if (_affectionEnabled &&
+          _analyzer != null &&
+          _emotionState != null &&
+          !safeMode) {
+        Future.delayed(const Duration(milliseconds: 300),
+            () => _doEmotionAnalysis(text.trim()));
       }
     }
+  }
+
+  /// Parse quick-reply block from AI response.
+  /// Format: \n[快捷回复]\n1. xxx\n2. yyy
+  static List<String>? _parseQuickReplies(String content) {
+    final m = RegExp(
+      r'\[快捷回复\]\s*\n\s*(?:1|一)[\.、．:：]\s*(.+?)\s*\n\s*(?:2|二)[\.、．:：]\s*(.+?)(?:\s*$|\n\s*$)',
+      multiLine: true,
+    ).firstMatch(content);
+    if (m == null) return null;
+    final a = m.group(1)!.trim();
+    final b = m.group(2)!.trim();
+    if (a.isEmpty || b.isEmpty) return null;
+    return [a, b];
   }
 
   /// Unified emotion analysis via unconscious LLM.
@@ -755,65 +894,19 @@ class ChatProvider extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      print('[EmotionAnalysis] 潜意识分析失败，下轮重试: $e');
+      debugPrint('[EmotionAnalysis] 潜意识分析失败，下轮重试: $e');
     }
   }
 
-  /// Generate quick reply suggestions. Uses a separate API call with
-  /// role-switch system prompt to avoid character-perspective bias.
-  Future<void> _generateQuickReplies(String lastAiContent) async {
-    if (_service == null || _currentConvId == null) return;
-    _showQuickReplies = true;
-    notifyListeners();
-    try {
-      final tone = await AuthService.getQuickReplyTone();
-      final toneGuide = tone == '下流'
-          ? '语气粗俗带脏话'
-          : tone == '优雅'
-              ? '语气文雅有修养'
-              : '语气自然日常';
-      // Grab recent exchanges for context
-      final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
-      final recent =
-          allMsgs.length > 6 ? allMsgs.sublist(allMsgs.length - 6) : allMsgs;
-      final context = recent
-          .map((m) => '${m.role == 'user' ? '用户' : '角色'}: ${m.content}')
-          .join('\n');
-      final prompt = '对话：\n$context\n\n'
-          '根据以上对话，生成用户接下来可能对角色说的2个回复选项：\n'
-          '1. safe（保守）：自然跟随剧情，15字以内\n'
-          '2. novel（创意）：更有想象力但不偏离，15字以内\n'
-          '$toneGuide\n'
-          '只输出JSON：{"safe":"...","novel":"..."}';
-      final result = await _service!
-          .chatRaw(prompt,
-              '你不是角色。你是快捷回复助手，替【用户】生成回复，发送给【角色】。站在用户视角，生成用户对角色说的话。只输出JSON，不要解释。')
-          .timeout(const Duration(seconds: 10));
-      final json = _extractJson(result);
-      if (json != null) {
-        final safe = json['safe'] as String? ?? '';
-        final novel = json['novel'] as String? ?? '';
-        if (safe.isNotEmpty && novel.isNotEmpty) {
-          _quickReplies = [safe, novel];
-        }
-      }
-    } catch (e) {
-      print('[QuickReply] 快捷回复生成失败: $e');
-      _quickReplies = [];
-      _showQuickReplies = false;
-    }
-    notifyListeners();
-  }
-
-  Map<String, dynamic>? _extractJson(String text) =>
-      JsonUtils.extractJson(text);
-
-  /// Send a quick reply as user message.
-  Future<void> sendQuickReply(String text) async {
-    _showQuickReplies = false;
+  /// Mark a quick reply as consumed for this round and return the text.
+  /// The caller should insert the returned text into the input field.
+  String? consumeQuickReply(int index) {
+    if (index < 0 || index >= _quickReplies.length) return null;
+    final text = _quickReplies[index];
     _quickReplies = [];
+    _quickReplyMessageIndex = null;
     notifyListeners();
-    await sendMessage(text);
+    return text;
   }
 
   /// Let AI continue without user input (no visible user message).
@@ -823,72 +916,38 @@ class ChatProvider extends ChangeNotifier {
         _service == null ||
         _currentConvId == null) return;
     _isContinuing = true;
-    _showQuickReplies = false;
-    _quickReplies = [];
     _isPending = true;
     _streamingContent = '';
     notifyListeners();
 
-    try {
-      final assistantMsg = Message(
-        conversationId: _currentConvId!,
-        role: 'assistant',
-        content: '',
-      );
-      _messages.add(assistantMsg);
-      notifyListeners();
+    // Build context via shared ContextBuilder (no Δ tag, inject continue)
+    final conv = await DatabaseService.getConversation(_currentConvId!);
+    final lastAi = _messages.where((m) => m.role == 'assistant' && m.content.isNotEmpty).lastOrNull;
+    final kbResults = lastAi != null ? await KnowledgeBase.search(lastAi.content, limit: 3) : <({String title, String content})>[];
+    final contextMsgs = await ContextBuilder.build(
+      conversationId: _currentConvId!,
+      systemPrompt: _systemPrompt,
+      conversationPrompt: conv.systemPrompt,
+      userPersona: _userPersona ?? conv.userPersona,
+      worldBackground: _worldBackground ?? conv.worldBackground,
+      emotionState: _emotionState,
+      affectionEnabled: _affectionEnabled,
+      mode: _mode,
+      messages: _messages,
+      segments: _segments,
+      kbResults: kbResults,
+      injectContinue: true,
+    );
 
-      // Build context via shared ContextBuilder (no Δ tag, inject continue)
-      final conv = await DatabaseService.getConversation(_currentConvId!);
-      final lastAi = _messages.where((m) => m.role == 'assistant' && m.content.isNotEmpty).lastOrNull;
-      final kbResults = lastAi != null ? await KnowledgeBase.search(lastAi.content, limit: 3) : <({String title, String content})>[];
-      final contextMsgs = await ContextBuilder.build(
-        conversationId: _currentConvId!,
-        systemPrompt: _systemPrompt,
-        conversationPrompt: conv.systemPrompt,
-        userPersona: _userPersona ?? conv.userPersona,
-        worldBackground: _worldBackground ?? conv.worldBackground,
-        emotionState: _emotionState,
-        affectionEnabled: _affectionEnabled,
-        mode: _mode,
-        messages: _messages,
-        segments: _segments,
-        kbResults: kbResults,
-        injectContinue: true,
-      );
+    final temp = 0.5 + (_affection.round() + 15) / 115 * 1.3;
+    final fullContent = await _streamAssistantReply(
+      contextMsgs: contextMsgs,
+      temperature: temp,
+    );
 
-      final temp = 0.5 + (_affection.round() + 15) / 115 * 1.3;
-      final fullContent = await _service!.streamChatRaw(
-        contextMessages: contextMsgs,
-        temperature: temp,
-        onToken: (token) {
-          _streamingContent += token;
-          var display = _streamingContent;
-          final deltaMatch =
-              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
-          if (deltaMatch != null) {
-            display = display.substring(0, deltaMatch.start).trimRight();
-          }
-          _messages[_messages.length - 1] =
-              assistantMsg.copyWith(content: display);
-          notifyListeners();
-        },
-        onDone: () => _streamingContent = '',
-      );
-
-      final savedMsg = assistantMsg.copyWith(content: fullContent);
-      _messages[_messages.length - 1] = savedMsg;
-      await DatabaseService.insertMessage(savedMsg);
-
+    if (fullContent != null) {
       final updatedConv = conv.copyWith(updatedAt: DateTime.now());
       await DatabaseService.updateConversation(updatedConv);
-    } catch (e) {
-      _error = '请求失败: $e';
-      if (_messages.isNotEmpty &&
-          _messages.last.role == 'assistant' &&
-          _messages.last.content.isEmpty) {
-        _messages.removeLast();
-      }
     }
 
     _isPending = false;
@@ -896,16 +955,6 @@ class ChatProvider extends ChangeNotifier {
     _isContinuing = false;
     await _maybeArchiveSegment();
     notifyListeners();
-    // Generate quick replies after continue (no Δ/emotion analysis for continue)
-    if (_service != null) {
-      final aiMsgs = _messages
-          .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
-          .toList();
-      if (aiMsgs.isNotEmpty) {
-        Future.delayed(const Duration(milliseconds: 400),
-            () => _generateQuickReplies(aiMsgs.last.content));
-      }
-    }
   }
 
   Future<void> _maybeArchiveSegment() async {
@@ -977,7 +1026,7 @@ class ChatProvider extends ChangeNotifier {
           if (idx != -1) _segments[idx] = updated;
         }
       } catch (e) {
-        print('[Summary] AI 总结生成失败: $e');
+        debugPrint('[Summary] AI 总结生成失败: $e');
       }
     }
 

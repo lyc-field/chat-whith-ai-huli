@@ -15,6 +15,7 @@ class ExportPersonaDialog extends StatefulWidget {
 class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
   late List<bool> _personaChecked;
   bool _exportUser = false;
+  bool _exportOpening = false;
   bool _exportWorld = false;
 
   @override
@@ -30,6 +31,7 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
         _personaChecked[i] = true;
       }
       _exportUser = true;
+      _exportOpening = true;
       _exportWorld = true;
     });
   }
@@ -55,6 +57,7 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
     final json = PersonaIO.buildExportJson(
       selectedPersonas: selectedPersonas,
       userPersona: _exportUser ? chat.userPersona : null,
+      openingLine: _exportOpening ? chat.openingLine : null,
       worldBackground: _exportWorld ? chat.worldBackground : null,
     );
 
@@ -104,6 +107,23 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
                     style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface)),
                 subtitle: Text(
                     context.read<ChatProvider>().userPersona ?? '(未设置)',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+
+              const Divider(height: 20),
+
+              CheckboxListTile(
+                value: _exportOpening,
+                onChanged: (v) => setState(() => _exportOpening = v ?? false),
+                title: Text('开场白',
+                    style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface)),
+                subtitle: Text(
+                    context.read<ChatProvider>().openingLine ?? '(未设置)',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
