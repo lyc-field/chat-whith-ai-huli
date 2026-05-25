@@ -7,17 +7,16 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.zs.chatApp
     scripts:
       - name: Install dependencies
         script: flutter pub get
-      - name: Build iOS (unsigned)
-        script: |
-          flutter build ios --release --no-codesign
-          mkdir -p build/ios/ipa
-          cp -r build/ios/iphoneos/Runner.app build/ios/ipa/Payload
-          cd build/ios/ipa && zip -r 小狐爱说话_ios.ipa Payload && rm -rf Payload
+      - name: iOS build
+        script: flutter build ipa --release --export-method development
     artifacts:
-      - build/ios/ipa/小狐爱说话_ios.ipa
+      - build/ios/ipa/*.ipa
 
   android-build:
     name: Android Build
