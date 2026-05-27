@@ -11,8 +11,38 @@ import 'summary_management_page.dart';
 import 'admin_login_page.dart';
 import 'bookmark_management_page.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  int _adminTapCount = 0;
+  Timer? _adminResetTimer;
+
+  @override
+  void dispose() {
+    _adminResetTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onAdminTrigger() {
+    _adminTapCount++;
+    _adminResetTimer?.cancel();
+    if (_adminTapCount >= 6) {
+      _adminTapCount = 0;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AdminLoginPage()),
+      );
+      return;
+    }
+    _adminResetTimer = Timer(const Duration(seconds: 3), () {
+      _adminTapCount = 0;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,14 +52,17 @@ class HomePage extends StatelessWidget {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
+            GestureDetector(
+              onTap: _onAdminTrigger,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child:
+                    Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
               ),
-              child:
-                  Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
             ),
             const SizedBox(width: 8),
             Text('小狐爱说话',
@@ -171,9 +204,6 @@ class HomePage extends StatelessWidget {
     String selectedProvider = chatProvider.providerType;
     bool obscureKey = true;
     bool prefilled = false;
-    int tapCount = 0;
-    Timer? resetTimer;
-
     // Load saved config for pre-filling fields (only once, don't overwrite user input)
     chatProvider.loadApiConfig().then((cfg) {
       if (!prefilled) {
@@ -198,13 +228,23 @@ class HomePage extends StatelessWidget {
       setState(() => selectedProvider = provider);
     }
 
+    String? _inlineError;
+    bool _dialogSaving = false;
+    bool _dialogSaved = false;
+
     showDialog(
       context: context,
       builder: (outerCtx) {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              title: const Text('API 设置'),
+              title: Row(children: [
+                const Text('API 设置'),
+                if (_dialogSaved) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.check_circle, size: 18, color: Colors.green[600]),
+                ],
+              ]),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -264,62 +304,56 @@ class HomePage extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (_inlineError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_inlineError!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                  ],
                 ],
               ),
               actions: [
                 TextButton(
-                    onPressed: () {
-                      resetTimer?.cancel();
-                      Navigator.pop(outerCtx);
-                    },
-                    child: const Text('取消')),
+                    onPressed: () => Navigator.pop(outerCtx),
+                    child: const Text('关闭')),
                 FilledButton(
-                  onPressed: () async {
+                  onPressed: _dialogSaving ? null : () async {
                     final key = keyCtrl.text.trim();
-                    if (key.isNotEmpty) {
-                      try {
-                        await chatProvider.setApiConfig(
-                          providerType: selectedProvider,
-                          key: key,
-                          endpoint: endpointCtrl.text.trim().isNotEmpty
-                              ? endpointCtrl.text.trim()
-                              : null,
-                          model: modelCtrl.text.trim().isNotEmpty
-                              ? modelCtrl.text.trim()
-                              : null,
-                        );
-                      } catch (_) {
+                    if (key.isEmpty) {
+                      setDialogState(() => _inlineError = '请输入 API Key');
+                      return;
+                    }
+                    setDialogState(() {
+                      _dialogSaving = true;
+                      _inlineError = null;
+                    });
+                    try {
+                      await chatProvider.setApiConfig(
+                        providerType: selectedProvider,
+                        key: key,
+                        endpoint: endpointCtrl.text.trim().isNotEmpty
+                            ? endpointCtrl.text.trim()
+                            : null,
+                        model: modelCtrl.text.trim().isNotEmpty
+                            ? modelCtrl.text.trim()
+                            : null,
+                      );
+                      setDialogState(() {
+                        _dialogSaving = false;
+                        _dialogSaved = true;
+                      });
+                      // Auto-clear success icon after 2 seconds
+                      Future.delayed(const Duration(seconds: 2), () {
                         if (outerCtx.mounted) {
-                          ScaffoldMessenger.of(outerCtx).showSnackBar(
-                            const SnackBar(content: Text('保存失败，请重试')),
-                          );
+                          setDialogState(() => _dialogSaved = false);
                         }
-                        return;
-                      }
-                      if (outerCtx.mounted) Navigator.pop(outerCtx);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('API 已设置')),
-                        );
-                      }
-                    } else {
-                      tapCount++;
-                      if (tapCount >= 6) {
-                        Navigator.pop(outerCtx);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const AdminLoginPage()),
-                        );
-                        return;
-                      }
-                      resetTimer?.cancel();
-                      resetTimer = Timer(const Duration(seconds: 3), () {
-                        tapCount = 0;
+                      });
+                    } catch (_) {
+                      setDialogState(() {
+                        _dialogSaving = false;
+                        _inlineError = '保存失败，请重试';
                       });
                     }
                   },
-                  child: const Text('确定'),
+                  child: Text(_dialogSaving ? '保存中...' : '确定'),
                 ),
               ],
             );
