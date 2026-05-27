@@ -11,6 +11,7 @@ class Conversation {
   final String? worldBackground;
   final String? openingLine;
   final String? avatarPath;
+  final String? chatBackground;
   final int affection;
   final String mode; // 'summary' or 'bookmark'
 
@@ -25,6 +26,7 @@ class Conversation {
     this.worldBackground,
     this.openingLine,
     this.avatarPath,
+    this.chatBackground,
     this.affection = 30,
     this.mode = 'summary',
   });
@@ -40,6 +42,7 @@ class Conversation {
       'world_background': worldBackground,
       'opening_line': openingLine,
       'avatar_path': avatarPath,
+      'chat_background': chatBackground,
       'affection': affection,
       'mode': mode,
     };
@@ -56,6 +59,7 @@ class Conversation {
       worldBackground: map['world_background'] as String?,
       openingLine: map['opening_line'] as String?,
       avatarPath: map['avatar_path'] as String?,
+      chatBackground: map['chat_background'] as String?,
       affection: map['affection'] as int? ?? 30,
       mode: (map['mode'] as String?) ?? 'summary',
     );
@@ -70,6 +74,7 @@ class Conversation {
     String? worldBackground,
     String? openingLine,
     String? avatarPath,
+    String? chatBackground,
     int? affection,
     String? mode,
   }) {
@@ -84,6 +89,7 @@ class Conversation {
       worldBackground: worldBackground ?? this.worldBackground,
       openingLine: openingLine ?? this.openingLine,
       avatarPath: avatarPath ?? this.avatarPath,
+      chatBackground: chatBackground ?? this.chatBackground,
       affection: affection ?? this.affection,
       mode: mode ?? this.mode,
     );

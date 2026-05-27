@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -320,6 +321,46 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           ),
           const SizedBox(height: 24),
 
+          // ── 聊天背景 ──
+          Text('聊天背景', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text('从相册选择一张图片作为聊天界面的背景',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+          const SizedBox(height: 8),
+          Row(children: [
+            if (chat.chatBackground != null && chat.chatBackground!.isNotEmpty)
+              Container(
+                width: 72,
+                height: 72,
+                margin: const EdgeInsets.only(right: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                  image: DecorationImage(
+                    image: FileImage(File(chat.chatBackground!)),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            OutlinedButton.icon(
+              onPressed: _pickChatBackground,
+              icon: const Icon(Icons.image_outlined, size: 18),
+              label: Text(chat.chatBackground != null ? '更换背景' : '选择图片'),
+            ),
+            if (chat.chatBackground != null) ...[
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: () => chat.setChatBackground(null),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                tooltip: '清除背景',
+              ),
+            ],
+          ]),
+          const SizedBox(height: 6),
+          Text('建议使用长方形照片，竖屏效果最佳',
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.outline.withOpacity(0.7))),
+          const SizedBox(height: 24),
+
           // ── 初始好感度 ──
           if (chat.affectionEnabled) ...[
             if (chat.messages.where((m) => m.role == 'user').isEmpty) ...[
@@ -392,7 +433,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['json'],
+        allowedExtensions: ['xhp', 'json'],
       );
       if (result == null || result.files.isEmpty) return;
 
@@ -483,6 +524,18 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     }
   }
 
+  Future<void> _pickChatBackground() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+      );
+      if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+      final chat = context.read<ChatProvider>();
+      await chat.setChatBackground(result.files.first.path!);
+      setState(() {});
+    } catch (_) {}
+  }
+
   void _showExportDialog() {
     showDialog<String>(
       context: context,
@@ -507,7 +560,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           maxLength: 50,
           decoration: const InputDecoration(
             hintText: '输入文件名...',
-            suffixText: '.json',
+            suffixText: '.xhp',
             border: OutlineInputBorder(),
           ),
           onSubmitted: (v) => Navigator.pop(ctx, v.trim()),

@@ -166,9 +166,37 @@ class HomePage extends StatelessWidget {
   void _showApiKeyDialog(BuildContext context) {
     final chatProvider = context.read<ChatProvider>();
     final keyCtrl = TextEditingController();
+    final endpointCtrl = TextEditingController();
+    final modelCtrl = TextEditingController();
     String selectedProvider = chatProvider.providerType;
+    bool obscureKey = true;
+    bool prefilled = false;
     int tapCount = 0;
     Timer? resetTimer;
+
+    // Load saved config for pre-filling fields (only once, don't overwrite user input)
+    chatProvider.loadApiConfig().then((cfg) {
+      if (!prefilled) {
+        prefilled = true;
+        keyCtrl.text = cfg['key'] ?? '';
+        endpointCtrl.text = cfg['endpoint'] ?? '';
+        modelCtrl.text = cfg['model'] ?? '';
+      }
+    });
+
+    // Set default endpoint/model based on provider
+    void applyProviderDefaults(String provider, void Function(void Function()) setState) {
+      if (provider == 'deepseek') {
+        endpointCtrl.text = 'https://api.deepseek.com/v1/chat/completions';
+        modelCtrl.text = 'deepseek-v4-flash';
+      } else if (provider == 'openai') {
+        endpointCtrl.text = 'https://api.openai.com/v1/chat/completions';
+        modelCtrl.text = 'gpt-4o-mini';
+      } else {
+        // custom: keep current text, don't overwrite
+      }
+      setState(() => selectedProvider = provider);
+    }
 
     showDialog(
       context: context,
@@ -195,19 +223,45 @@ class HomePage extends StatelessWidget {
                     ],
                     onChanged: (v) {
                       if (v != null) {
-                        setDialogState(() => selectedProvider = v);
+                        applyProviderDefaults(v, setDialogState);
                       }
                     },
                   ),
                   const SizedBox(height: 12),
+                  if (selectedProvider == 'custom') ...[
+                    TextField(
+                      controller: endpointCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'API 端点 URL',
+                        hintText: 'https://api.example.com/v1/chat/completions',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.link, size: 20),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: modelCtrl,
+                      decoration: const InputDecoration(
+                        labelText: '模型名称',
+                        hintText: 'gpt-4o-mini',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.smart_toy, size: 20),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   TextField(
                     controller: keyCtrl,
-                    obscureText: true,
-                    decoration: const InputDecoration(
+                    obscureText: obscureKey,
+                    decoration: InputDecoration(
                       labelText: 'API Key',
                       hintText: 'sk-...',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.key, size: 20),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.key, size: 20),
+                      suffixIcon: IconButton(
+                        icon: Icon(obscureKey ? Icons.visibility_off : Icons.visibility, size: 20),
+                        onPressed: () => setDialogState(() => obscureKey = !obscureKey),
+                      ),
                     ),
                   ),
                 ],
@@ -223,10 +277,25 @@ class HomePage extends StatelessWidget {
                   onPressed: () async {
                     final key = keyCtrl.text.trim();
                     if (key.isNotEmpty) {
-                      await chatProvider.setApiConfig(
-                        providerType: selectedProvider,
-                        key: key,
-                      );
+                      try {
+                        await chatProvider.setApiConfig(
+                          providerType: selectedProvider,
+                          key: key,
+                          endpoint: endpointCtrl.text.trim().isNotEmpty
+                              ? endpointCtrl.text.trim()
+                              : null,
+                          model: modelCtrl.text.trim().isNotEmpty
+                              ? modelCtrl.text.trim()
+                              : null,
+                        );
+                      } catch (_) {
+                        if (outerCtx.mounted) {
+                          ScaffoldMessenger.of(outerCtx).showSnackBar(
+                            const SnackBar(content: Text('保存失败，请重试')),
+                          );
+                        }
+                        return;
+                      }
                       if (outerCtx.mounted) Navigator.pop(outerCtx);
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(

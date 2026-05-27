@@ -32,7 +32,7 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 18,
+        version: 19,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -45,7 +45,7 @@ class DatabaseService {
       // Last resort: wipe and recreate
       try { await deleteDatabase(path); } catch (_) {}
       try { await File(path).delete(); } catch (_) {}
-      return await openDatabase(path, version: 18, onCreate: _onCreate);
+      return await openDatabase(path, version: 19, onCreate: _onCreate);
     }
   }
 
@@ -61,6 +61,7 @@ class DatabaseService {
         world_background TEXT,
         avatar_path TEXT,
         opening_line TEXT,
+        chat_background TEXT,
         affection INTEGER NOT NULL DEFAULT 30,
         mode TEXT NOT NULL DEFAULT 'summary'
       )
@@ -390,6 +391,12 @@ class DatabaseService {
       try {
         await db.execute(
             "ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 19) {
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN chat_background TEXT");
       } catch (_) {}
     }
     if (oldVersion < 18) {

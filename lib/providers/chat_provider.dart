@@ -30,6 +30,7 @@ class ChatProvider extends ChangeNotifier {
   String? _userPersona;
   String? _worldBackground;
   String? _openingLine;
+  String? _chatBackground;
   String _mode = 'summary';
 
   List<Message> _messages = [];
@@ -67,6 +68,7 @@ class ChatProvider extends ChangeNotifier {
   String? get userPersona => _userPersona;
   String? get worldBackground => _worldBackground;
   String? get openingLine => _openingLine;
+  String? get chatBackground => _chatBackground;
   String get mode => _mode;
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
@@ -188,6 +190,7 @@ class ChatProvider extends ChangeNotifier {
     _userPersona = conv.userPersona;
     _worldBackground = conv.worldBackground;
     _openingLine = conv.openingLine;
+    _chatBackground = conv.chatBackground;
     _mode = conv.mode;
     _error = null;
     _showSummaryPrompt = false;
@@ -264,6 +267,7 @@ class ChatProvider extends ChangeNotifier {
     _userPersona = null;
     _worldBackground = null;
     _openingLine = null;
+    _chatBackground = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
     _quickReplies = [];
@@ -368,6 +372,19 @@ class ChatProvider extends ChangeNotifier {
       final conv = await DatabaseService.getConversation(_currentConvId!);
       final updated = conv.copyWith(
         worldBackground: _worldBackground,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateConversation(updated);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setChatBackground(String? path) async {
+    _chatBackground = path;
+    if (_currentConvId != null) {
+      final conv = await DatabaseService.getConversation(_currentConvId!);
+      final updated = conv.copyWith(
+        chatBackground: _chatBackground,
         updatedAt: DateTime.now(),
       );
       await DatabaseService.updateConversation(updated);
@@ -697,10 +714,12 @@ class ChatProvider extends ChangeNotifier {
       segments: _segments,
       kbResults: kbResults,
       injectDeltaTag: doAffectionJudge,
-      injectQuickReply: true,
+      injectQuickReply: _affectionEnabled,
     );
 
-    final temp = 0.5 + (_affection + 15) / 115 * 1.3;
+    final temp = _affectionEnabled
+        ? 0.5 + (_affection + 15) / 115 * 1.3
+        : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
@@ -939,7 +958,9 @@ class ChatProvider extends ChangeNotifier {
       injectContinue: true,
     );
 
-    final temp = 0.5 + (_affection.round() + 15) / 115 * 1.3;
+    final temp = _affectionEnabled
+        ? 0.5 + (_affection.round() + 15) / 115 * 1.3
+        : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
@@ -1010,11 +1031,11 @@ class ChatProvider extends ChangeNotifier {
                 ? _systemPrompt!.trim()
                 : null;
         final systemPrompt = persona != null
-            ? '$persona\n\n现在，你正在写日记，以第一人称「我」的口吻回顾刚才发生的事。你必须完全保持设定中的性格、语气和说话风格。日记内容要像角色本人写的，不要像第三人称总结。'
-            : '你是总结助手。请用第一人称「我」的口吻回顾以下对话，保持角色的性格和语气。';
+            ? '$persona\n\n现在，你正在写日记，以第一人称「我」的口吻回顾刚才发生的事。你必须完全保持设定中的性格、语气和说话风格。日记内容要像角色本人写的，不要像第三人称总结。写得简短精炼，只记录最关键的事件和情绪变化，不要流水账。'
+            : '你是总结助手。请用第一人称「我」的口吻回顾以下对话，保持角色的性格和语气。写得简短精炼，只抓重点，不要展开。';
         final userPrompt = persona != null
-            ? '用你的口吻，以第一人称写一段简短的日记（不超过200字），回顾以下对话中发生的事：\n\n$archiveText'
-            : '请用不超过200字的第一人称总结以下对话要点：\n\n$archiveText';
+            ? '用你的口吻，以第一人称写一段日记，回顾以下对话中发生的事。要求：写短一点，写准一点，只挑最重要的写，不要逐句复述。\n\n$archiveText'
+            : '请用第一人称总结以下对话要点，写短写准，只抓关键信息：\n\n$archiveText';
 
         final result = await _service!.chatRaw(userPrompt, systemPrompt);
         final trimmed = result.trim();

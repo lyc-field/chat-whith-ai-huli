@@ -7,8 +7,40 @@ import '../models/ai_persona.dart';
 class PersonaIO {
   static const _appMarker = 'xiaohu-persona-pack';
   static const _version = 1;
+  static const _secretKey = 'xh-ai-chat-2024-secret';
+
+  // ─── XOR + Base64 encryption ───
+
+  static String _encrypt(String plain) {
+    final bytes = utf8.encode(plain);
+    final keyBytes = utf8.encode(_secretKey);
+    final result = <int>[];
+    for (int i = 0; i < bytes.length; i++) {
+      result.add(bytes[i] ^ keyBytes[i % keyBytes.length]);
+    }
+    return base64Encode(result);
+  }
+
+  static String _decrypt(String encoded) {
+    final bytes = base64Decode(encoded);
+    final keyBytes = utf8.encode(_secretKey);
+    final result = <int>[];
+    for (int i = 0; i < bytes.length; i++) {
+      result.add(bytes[i] ^ keyBytes[i % keyBytes.length]);
+    }
+    return utf8.decode(result);
+  }
+
+  static bool _isEncrypted(String content) {
+    final trimmed = content.trim();
+    // encrypted files start with a base64-looking character, plain JSON starts with '{'
+    return !trimmed.startsWith('{');
+  }
+
+  // ─── Export / Import ───
 
   /// Build export JSON from selected personas, user persona, world background.
+  /// Returns encrypted content (XOR + Base64).
   static String buildExportJson({
     required List<AIPersona> selectedPersonas,
     required String? userPersona,
@@ -37,10 +69,11 @@ class PersonaIO {
           : null,
     };
     const encoder = JsonEncoder.withIndent('  ');
-    return encoder.convert(map);
+    final json = encoder.convert(map);
+    return _encrypt(json);
   }
 
-  /// Share JSON data via system share sheet with a custom filename.
+  /// Share encrypted data via system share sheet with a custom filename.
   static Future<void> shareJson({
     required String json,
     required String fileName,
@@ -49,8 +82,8 @@ class PersonaIO {
     final bytes = Uint8List.fromList(utf8.encode(json));
     final xFile = XFile.fromData(
       bytes,
-      name: fileName.endsWith('.json') ? fileName : '$fileName.json',
-      mimeType: 'application/json',
+      name: fileName.endsWith('.xhp') ? fileName : '$fileName.xhp',
+      mimeType: 'application/octet-stream',
     );
     await Share.shareXFiles(
       [xFile],
@@ -58,11 +91,13 @@ class PersonaIO {
     );
   }
 
-  /// Parse and validate an imported JSON string.
-  /// Returns null error on success.
-  static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? openingLine, String? error}) parseImportJson(String json) {
+  /// Parse and validate an imported file content.
+  /// Supports both encrypted (.xhp) and legacy plain JSON (.json) files.
+  static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? openingLine, String? error}) parseImportJson(String raw) {
     try {
-      final map = jsonDecode(json) as Map<String, dynamic>;
+      // Try decryption first (for .xhp files); fall back to plain JSON (for legacy .json files)
+      final jsonStr = _isEncrypted(raw) ? _decrypt(raw.trim()) : raw;
+      final map = jsonDecode(jsonStr) as Map<String, dynamic>;
       if (map['app'] != _appMarker) {
         return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式不匹配，仅支持导入本应用导出的角色包');
       }
@@ -90,11 +125,11 @@ class PersonaIO {
         error: null,
       );
     } catch (_) {
-      return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: 'JSON 格式错误，无法解析该文件');
+      return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式错误，无法解析该文件');
     }
   }
 
-  /// Read JSON from a file path.
+  /// Read a file from a file path (binary safe).
   static Future<String> readJsonFile(String filePath) async {
     final file = File(filePath);
     if (await file.exists()) {

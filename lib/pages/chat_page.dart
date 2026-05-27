@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/conversation.dart';
@@ -342,12 +343,21 @@ class _ChatPageState extends State<ChatPage> {
           if (!_fabInitialized) {
             _fabOffset = Offset(
               constraints.maxWidth - 60,
-              constraints.maxHeight - 80,
+              180, // below the tone float button
             );
             _fabInitialized = true;
           }
           return Stack(
             children: [
+              // Chat background image
+              if (provider.chatBackground != null && provider.chatBackground!.isNotEmpty)
+                Positioned.fill(
+                  child: Image.file(
+                    File(provider.chatBackground!),
+                    fit: BoxFit.cover,
+                    opacity: const AlwaysStoppedAnimation(0.15),
+                  ),
+                ),
               Column(children: [
                 if (provider.error != null)
                   Container(
@@ -395,7 +405,7 @@ class _ChatPageState extends State<ChatPage> {
                     ],
                   ),
                 ),
-                if (provider.quickReplies.isNotEmpty && !provider.isPending)
+                if (provider.quickReplies.isNotEmpty && !provider.isPending && provider.affectionEnabled)
                   _buildQuickReplyChips(provider),
                 MessageInput(
                   onSend: (text) {
