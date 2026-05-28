@@ -481,6 +481,26 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
         await pp.importPersona(p);
       }
 
+      // Clean up empty placeholder personas (name='默认角色' + all content fields empty)
+      // so the imported persona becomes the only one and survives app restart.
+      if (parsed.personas.isNotEmpty) {
+        final toRemove = <String>[];
+        for (final p in pp.personas) {
+          final isEmpty = p.identity.trim().isEmpty &&
+              p.personality.trim().isEmpty &&
+              p.appearance.trim().isEmpty &&
+              p.notes.trim().isEmpty &&
+              (p.name.trim().isEmpty || p.name.trim() == '默认角色');
+          if (isEmpty) toRemove.add(p.id);
+        }
+        // Only clean up if some personas with content will remain
+        if (toRemove.length < pp.personas.length) {
+          for (final id in toRemove) {
+            await pp.removePersona(id);
+          }
+        }
+      }
+
       if (parsed.userPersona != null && parsed.userPersona!.isNotEmpty) {
         _userController.text = parsed.userPersona!;
       }
@@ -560,7 +580,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           maxLength: 50,
           decoration: const InputDecoration(
             hintText: '输入文件名...',
-            suffixText: '.xhp',
+            suffixText: '.json',
             border: OutlineInputBorder(),
           ),
           onSubmitted: (v) => Navigator.pop(ctx, v.trim()),

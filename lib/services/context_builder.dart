@@ -33,13 +33,13 @@ class ContextBuilder {
   }) async {
     final contextMsgs = <Map<String, dynamic>>[];
 
-    // 1. System prompt with emotion panel + global rules
+    // 1. System prompt: persona + user info + world background + global rules
     final sPrompt = systemPrompt ?? conversationPrompt;
     final globalPrompt = await AuthService.getGlobalPrompt();
     final hasGlobal = globalPrompt != null && globalPrompt.trim().isNotEmpty;
     final hasUser = sPrompt != null && sPrompt.trim().isNotEmpty;
 
-    if (hasUser || hasGlobal || (affectionEnabled && emotionState != null)) {
+    if (hasUser || hasGlobal) {
       final sb = StringBuffer();
       if (hasUser) {
         sb.writeln(sPrompt.trim());
@@ -54,23 +54,25 @@ class ContextBuilder {
         sb.writeln('【世界背景】');
         sb.writeln(worldBackground.trim());
       }
-      if (affectionEnabled && emotionState != null) {
-        _appendEmotionPanel(sb, emotionState);
-      }
-      if ((hasUser || (affectionEnabled && emotionState != null)) &&
-          hasGlobal) {
+      if (hasGlobal) {
         sb.writeln();
         sb.writeln('---');
         sb.writeln();
-      }
-      if (hasGlobal) {
         sb.writeln('[不可违背的安全规则]');
         sb.writeln(globalPrompt.trim());
       }
       contextMsgs.add({'role': 'system', 'content': sb.toString()});
     }
 
-    // 2. Segment summaries
+    // 2. Emotion state (separate message = higher attention weight)
+    if (affectionEnabled && emotionState != null) {
+      contextMsgs.add({
+        'role': 'system',
+        'content': _buildEmotionContent(emotionState),
+      });
+    }
+
+    // 3. Segment summaries
     for (final seg in segments) {
       if (seg.content.trim().isNotEmpty) {
         contextMsgs.add({
@@ -141,25 +143,30 @@ class ContextBuilder {
     return contextMsgs;
   }
 
-  static void _appendEmotionPanel(StringBuffer sb, EmotionState state) {
+  /// Build emotion content as a standalone system message.
+  /// Returns a strongly-worded directive that the AI must embody the current
+  /// emotional state in tone, attitude, and behaviour.
+  static String _buildEmotionContent(EmotionState state) {
     final labels = EmotionTables.getEmotionDescription(state);
+    final sb = StringBuffer();
+    sb.writeln('【当前情绪状态 — 这是你此刻的真实感受，必须完全融入角色演绎】');
     sb.writeln();
-    sb.writeln('【当前情绪数值】');
+    sb.writeln('你此刻对用户的感情：${labels['towards_user']}');
+    sb.writeln('你此刻的自我感受：${labels['self_state']}');
+    sb.writeln();
+    sb.writeln('数值参考（勿在回复中提及）：');
     sb.writeln(
-        '他力比多：${state.currentLibidoOther.toStringAsFixed(1)}/50（亲近/给予温暖的欲望）');
+        '  亲近欲：${state.currentLibidoOther.toStringAsFixed(1)}/50  |  攻击欲：${state.currentAggressionOther.toStringAsFixed(1)}/50');
     sb.writeln(
-        '他攻击性：${state.currentAggressionOther.toStringAsFixed(1)}/50（推开/伤害的冲动）');
-    sb.writeln('好感度：${state.affection.toStringAsFixed(1)}/100');
-    sb.writeln(
-        '自力比多：${state.currentLibidoSelf.toStringAsFixed(1)}/50（自爱/珍视自己）');
-    sb.writeln(
-        '自攻击性：${state.currentAggressionSelf.toStringAsFixed(1)}/50（自责/自我毁灭）');
-    sb.writeln(
-        '参考标签：对用户「${labels['towards_user']}」，自身「${labels['self_state']}」');
+        '  自爱：${state.currentLibidoSelf.toStringAsFixed(1)}/50  |  自毁：${state.currentAggressionSelf.toStringAsFixed(1)}/50');
+    sb.writeln('  好感度：${state.affection.toStringAsFixed(1)}/100');
     if (EmotionTables.isSelfDestructMode(state)) {
-      sb.writeln('⚠ 当前处于自毁倾诉模式：话量激增、自我贬低、难以自控');
+      sb.writeln();
+      sb.writeln('⚠ 自毁倾诉模式：话量激增、自我贬低、难以自控。你必须大量输出内心独白，语无伦次地倾诉痛苦。');
     }
-    sb.writeln('（请根据上述数值和你在人设中定义的情绪驱动规则来演绎角色，不要提及数值。）');
+    sb.writeln();
+    sb.writeln('（情绪是你演绎角色的核心驱动力，优先级高于一切设定。你的语气、态度、用词、行为倾向必须与上述情绪高度一致。不要提及任何数值。）');
+    return sb.toString();
   }
 
   /// Inject the Δ tag instruction into the last user message in contextMsgs.

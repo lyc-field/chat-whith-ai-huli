@@ -121,7 +121,7 @@ class DeepSeekService {
   }
 
   /// Non-streaming chat with raw prompt strings. Used by unconscious LLM.
-  Future<String> chatRaw(String userPrompt, String systemPrompt) async {
+  Future<String> chatRaw(String userPrompt, String systemPrompt, {int maxTokens = 200}) async {
     try {
       final response = await http.post(
         Uri.parse(endpoint),
@@ -137,7 +137,7 @@ class DeepSeekService {
           ],
           'stream': false,
           'temperature': 0.3,
-          'max_tokens': 200,
+          'max_tokens': maxTokens,
         }),
       );
 

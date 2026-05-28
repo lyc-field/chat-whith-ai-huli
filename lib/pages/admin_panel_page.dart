@@ -5,7 +5,6 @@ import '../models/conversation.dart';
 import '../models/ai_persona.dart';
 import '../models/emotion_state.dart';
 import '../widgets/emotion_grid.dart';
-import 'knowledge_base_page.dart';
 
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
@@ -625,20 +624,6 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                   ),
                 ],
               ),
-            ),
-          ),
-          // ── 资料库 ──
-          const SizedBox(height: 24),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.library_books, size: 24),
-              title: const Text('资料库管理'),
-              subtitle: const Text('导入小说文本，让AI参考写作风格'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const KnowledgeBasePage()));
-              },
             ),
           ),
         ],

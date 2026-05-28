@@ -6,7 +6,7 @@ import '../models/ai_persona.dart';
 
 class PersonaIO {
   static const _appMarker = 'xiaohu-persona-pack';
-  static const _version = 1;
+  static const _version = 2;
   static const _secretKey = 'xh-ai-chat-2024-secret';
 
   // ─── XOR + Base64 encryption ───
@@ -31,23 +31,42 @@ class PersonaIO {
     return utf8.decode(result);
   }
 
-  static bool _isEncrypted(String content) {
-    final trimmed = content.trim();
-    // encrypted files start with a base64-looking character, plain JSON starts with '{'
-    return !trimmed.startsWith('{');
+  /// Resolve the payload JSON string from raw file content.
+  /// v2: JSON wrapper with "data" field → decrypt
+  /// v1: raw base64 (.xhp) → decrypt
+  /// legacy: plain JSON → use as-is
+  static String? _resolvePayload(String raw) {
+    final trimmed = raw.trim();
+    // v2 JSON wrapper?
+    if (trimmed.startsWith('{')) {
+      try {
+        final map = jsonDecode(trimmed) as Map<String, dynamic>;
+        if (map['data'] is String) {
+          return _decrypt(map['data'] as String);
+        }
+        // Legacy plain JSON (already has personas at top level)
+        if (map['app'] == _appMarker) return trimmed;
+      } catch (_) {}
+    }
+    // v1 raw base64 (.xhp)
+    try {
+      final decoded = _decrypt(trimmed);
+      if (decoded.trim().startsWith('{')) return decoded;
+    } catch (_) {}
+    return null;
   }
 
   // ─── Export / Import ───
 
   /// Build export JSON from selected personas, user persona, world background.
-  /// Returns encrypted content (XOR + Base64).
+  /// Returns a valid .json file whose "data" field is XOR+Base64 encrypted.
   static String buildExportJson({
     required List<AIPersona> selectedPersonas,
     required String? userPersona,
     required String? openingLine,
     required String? worldBackground,
   }) {
-    final map = <String, dynamic>{
+    final payload = <String, dynamic>{
       'app': _appMarker,
       'version': _version,
       'exported_at': DateTime.now().toIso8601String(),
@@ -69,8 +88,16 @@ class PersonaIO {
           : null,
     };
     const encoder = JsonEncoder.withIndent('  ');
-    final json = encoder.convert(map);
-    return _encrypt(json);
+    final plainJson = encoder.convert(payload);
+    final encrypted = _encrypt(plainJson);
+    // Wrap in a JSON envelope so the file is valid JSON but the data is unreadable
+    const wrapper = JsonEncoder.withIndent('  ');
+    return wrapper.convert({
+      'app': _appMarker,
+      'version': _version,
+      'exported_at': DateTime.now().toIso8601String(),
+      'data': encrypted,
+    });
   }
 
   /// Share encrypted data via system share sheet with a custom filename.
@@ -82,8 +109,8 @@ class PersonaIO {
     final bytes = Uint8List.fromList(utf8.encode(json));
     final xFile = XFile.fromData(
       bytes,
-      name: fileName.endsWith('.xhp') ? fileName : '$fileName.xhp',
-      mimeType: 'application/octet-stream',
+      name: fileName.endsWith('.json') ? fileName : '$fileName.json',
+      mimeType: 'application/json',
     );
     await Share.shareXFiles(
       [xFile],
@@ -92,11 +119,13 @@ class PersonaIO {
   }
 
   /// Parse and validate an imported file content.
-  /// Supports both encrypted (.xhp) and legacy plain JSON (.json) files.
+  /// Supports: v2 JSON wrapper, v1 raw base64 (.xhp), and legacy plain JSON.
   static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? openingLine, String? error}) parseImportJson(String raw) {
     try {
-      // Try decryption first (for .xhp files); fall back to plain JSON (for legacy .json files)
-      final jsonStr = _isEncrypted(raw) ? _decrypt(raw.trim()) : raw;
+      final jsonStr = _resolvePayload(raw);
+      if (jsonStr == null) {
+        return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '无法识别文件格式');
+      }
       final map = jsonDecode(jsonStr) as Map<String, dynamic>;
       if (map['app'] != _appMarker) {
         return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式不匹配，仅支持导入本应用导出的角色包');

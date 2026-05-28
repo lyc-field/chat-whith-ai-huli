@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/segment_summary.dart';
-import '../models/affection_log.dart';
 import '../models/emotion_state.dart';
 import '../models/ai_persona.dart';
 import '../services/deepseek_service.dart';
@@ -11,19 +9,21 @@ import '../services/auth_service.dart';
 import '../services/emotion_service.dart';
 import '../services/context_builder.dart';
 import '../services/knowledge_base.dart';
+import '../services/affection_manager.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
-  // Memory thresholds: 20 rounds (40 msgs) max, archive 5 rounds (10 msgs) at a time
+  // Memory thresholds: 20 rounds (40 msgs) max, archive 8 rounds (16 msgs) at a time
   static const maxActiveMessages = 40;
   static const triggerArchiveAt = 40;
-  static const archiveCount = 10;
+  static const archiveCount = 16;
 
   ConversationProvider _convProvider;
   final PersonaProvider? _personaProvider;
   DeepSeekService? _service; // chat model
   String _providerType = 'deepseek';
+  final AffectionManager _affm = AffectionManager();
   bool _affectionEnabled = true;
   String? _currentConvId;
   String? _systemPrompt;
@@ -42,18 +42,9 @@ class ChatProvider extends ChangeNotifier {
   bool _showSummaryPrompt = false;
   int? _pendingSummaryIndex;
 
-  double _affection = 30.0;
-  double _previousRawAffection = 30.0;
-  bool? _affectionIncreasing; // null=no change, true=up, false=down
-  // Emotion system
-  EmotionState? _emotionState;
-  EmotionAnalyzer? _analyzer;
-
   // Quick reply
   List<String> _quickReplies = [];
-  int? _quickReplyMessageIndex; // which message the replies belong to
-  int _roundCount = 0;
-  final int _roundsUntilAffection = 5; // first N rounds: no affection changes
+  int? _quickReplyMessageIndex;
 
   // Auto-continue mode (AI keeps talking)
   bool _isContinuing = false;
@@ -73,16 +64,13 @@ class ChatProvider extends ChangeNotifier {
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
   int get affection => (isNewFormat
-      ? (_personaProvider!.currentPersona?.affection ?? _affection)
-      : _affection).round();
+      ? (_personaProvider!.currentPersona?.affection ?? _affm.affection)
+      : _affm.affection).round();
   String get providerType => _providerType;
   bool get affectionEnabled => _affectionEnabled;
-  EmotionState? get emotionState => _emotionState;
-  Map<String, String> get emotionLabels => _emotionState != null
-      ? EmotionTables.getEmotionDescription(_emotionState!)
-      : {'towards_user': '平淡', 'self_state': '平静'};
-  bool get isSelfDestructMode =>
-      _emotionState != null && EmotionTables.isSelfDestructMode(_emotionState!);
+  EmotionState? get emotionState => _affm.emotionState;
+  Map<String, String> get emotionLabels => _affm.emotionLabels;
+  bool get isSelfDestructMode => _affm.isSelfDestructMode;
   List<String> get quickReplies => _quickReplies;
   int? get quickReplyMessageIndex => _quickReplyMessageIndex;
   bool get isContinuing => _isContinuing;
@@ -94,29 +82,12 @@ class ChatProvider extends ChangeNotifier {
 
   ChatProvider(this._convProvider, [this._personaProvider]);
 
-  /// Sync current persona's affection and emotion state into ChatProvider fields.
+  /// Sync current persona's affection and emotion state via AffectionManager.
   Future<void> syncPersonaState() async {
     if (!isNewFormat || _currentConvId == null) return;
     final cp = _personaProvider!.currentPersona!;
-    _affection = cp.affection;
-    _previousRawAffection = cp.affection;
-    // Load or create persona emotion state
-    _emotionState = await DatabaseService.getPersonaEmotionState(_currentConvId!, cp.id);
-    if (_emotionState == null) {
-      _emotionState = EmotionState.createDefault(_currentConvId!,
-          initialAffection: cp.affection, personaId: cp.id);
-      await DatabaseService.insertPersonaEmotionState(_emotionState!);
-    }
+    await _affm.syncWithPersona(_currentConvId!, cp);
     notifyListeners();
-  }
-
-  /// Write back current affection to the persona.
-  Future<void> _flushPersonaAffection() async {
-    if (!isNewFormat) return;
-    final cp = _personaProvider!.currentPersona!;
-    cp.affection = _affection;
-    await DatabaseService.updateAIPersona(cp);
-    await DatabaseService.updatePersonaEmotionState(_emotionState!);
   }
 
   void updateConvProvider(ConversationProvider provider) {
@@ -143,7 +114,7 @@ class ChatProvider extends ChangeNotifier {
       endpoint: chatEndpoint,
       model: chatModel,
     );
-    _analyzer = EmotionAnalyzer(_service!);
+    _affm.analyzer = EmotionAnalyzer(_service!);
 
     await DatabaseService.saveSetting('api_key', key);
     await DatabaseService.saveSetting('api_endpoint', chatEndpoint);
@@ -163,7 +134,7 @@ class ChatProvider extends ChangeNotifier {
         endpoint: endpoint ?? 'https://api.deepseek.com/v1/chat/completions',
         model: model ?? 'deepseek-v4-flash',
       );
-      _analyzer = EmotionAnalyzer(_service!);
+      _affm.analyzer = EmotionAnalyzer(_service!);
 
       return true;
     }
@@ -197,7 +168,7 @@ class ChatProvider extends ChangeNotifier {
     _pendingSummaryIndex = null;
     _quickReplies = [];
     _quickReplyMessageIndex = null;
-    _roundCount = _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
+    _affm.roundCount = _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
     await (_personaProvider?.loadPersonas(convId) ?? Future.value());
 
     if (isNewFormat) {
@@ -205,44 +176,17 @@ class ChatProvider extends ChangeNotifier {
       await syncPersonaState();
     } else {
       // Old format: conversation-level emotion state
-      _emotionState = await DatabaseService.getEmotionState(convId);
-      if (_emotionState == null) {
-        _emotionState = EmotionState.createDefault(convId,
+      _affm.emotionState = await DatabaseService.getEmotionState(convId);
+      if (_affm.emotionState == null) {
+        _affm.emotionState = EmotionState.createDefault(convId,
             initialAffection: conv.affection.toDouble());
-        await DatabaseService.insertEmotionState(_emotionState!);
+        await DatabaseService.insertEmotionState(_affm.emotionState!);
       } else {
-        // Apply decay on load
-        final now = DateTime.now();
-        final elapsedOther =
-          now.difference(_emotionState!.lastUpdate).inSeconds / 3600.0;
-      if (elapsedOther > 0) {
-        _emotionState!.currentLibidoOther = DecayCalculator.applyDecay(
-            _emotionState!.currentLibidoOther,
-            _emotionState!.baseLibidoOther,
-            elapsedOther,
-            2.0);
-        _emotionState!.currentAggressionOther = DecayCalculator.applyDecay(
-            _emotionState!.currentAggressionOther,
-            _emotionState!.baseAggressionOther,
-            elapsedOther,
-            2.0);
-        _emotionState!.currentLibidoSelf = DecayCalculator.applyDecay(
-            _emotionState!.currentLibidoSelf,
-            _emotionState!.baseLibidoSelf,
-            elapsedOther,
-            2.0);
-        _emotionState!.currentAggressionSelf = DecayCalculator.applyDecay(
-            _emotionState!.currentAggressionSelf,
-            _emotionState!.baseAggressionSelf,
-            elapsedOther,
-            2.0);
-        _emotionState!.lastUpdate = now;
+        _affm.applyDecayOnLoad();
+        await DatabaseService.updateEmotionState(_affm.emotionState!);
       }
-      _emotionState!.lastInteraction = now;
-      await DatabaseService.updateEmotionState(_emotionState!);
-    }
-    _affection = _emotionState!.affection;
-    _previousRawAffection = _emotionState!.affection;
+      _affm.affection = _affm.emotionState!.affection;
+      _affm.previousRawAffection = _affm.emotionState!.affection;
     } // end old-format else
 
     notifyListeners();
@@ -272,11 +216,7 @@ class ChatProvider extends ChangeNotifier {
     _pendingSummaryIndex = null;
     _quickReplies = [];
     _quickReplyMessageIndex = null;
-    _roundCount = 0;
-    _affection = 30.0;
-    _previousRawAffection = 30.0;
-    _emotionState = null;
-    _affectionIncreasing = null;
+    _affm.reset();
     notifyListeners();
   }
 
@@ -301,29 +241,12 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setInitialAffection(int value) {
-    _affection = value.clamp(15, 50).toDouble();
-    _previousRawAffection = _affection;
+  void setInitialAffection(int value) => _affm.setInitialAffection(value);
 
-    if (_emotionState != null) {
-      _emotionState!.affection = _affection;
-    }
-  }
-
-  bool? get affectionIncreasing => _affectionIncreasing;
+  bool? get affectionIncreasing => _affm.affectionIncreasing;
 
   /// Returns true if affection just changed (consumed on read).
-  bool consumeAffectionChanged() {
-    final raw = _emotionState?.affection ?? _affection;
-    if ((raw.round() - _previousRawAffection.round()).abs() >= 1) {
-      _affectionIncreasing = raw > _previousRawAffection;
-      _previousRawAffection = raw;
-
-      return true;
-    }
-    _affectionIncreasing = null;
-    return false;
-  }
+  bool consumeAffectionChanged() => _affm.consumeAffectionChanged();
 
   Future<void> setSystemPrompt(String prompt) async {
     final trimmed = prompt.trim();
@@ -410,7 +333,7 @@ class ChatProvider extends ChangeNotifier {
     // New conversation — create one so the opening line appears in chat immediately.
     // Mirror the conversation-creation logic from sendMessage().
     final conv = await _convProvider.createConversation(
-        initialAffection: _affection.round(), mode: _mode);
+        initialAffection: _affm.affection.round(), mode: _mode);
     _currentConvId = conv.id;
 
     // Save system prompt if set
@@ -448,9 +371,9 @@ class ChatProvider extends ChangeNotifier {
         conv.copyWith(openingLine: _openingLine));
 
     // Create emotion state (mirrors sendMessage's new-conversation block)
-    _emotionState = EmotionState.createDefault(_currentConvId!,
-        initialAffection: _affection);
-    await DatabaseService.insertEmotionState(_emotionState!);
+    _affm.emotionState = EmotionState.createDefault(_currentConvId!,
+        initialAffection: _affm.affection);
+    await DatabaseService.insertEmotionState(_affm.emotionState!);
 
     // Insert opening line as first message
     final openingMsg = Message(
@@ -499,29 +422,15 @@ class ChatProvider extends ChangeNotifier {
     _pendingSummaryIndex = null;
 
     // Reset affection and emotion to initial values
-    _affection = 30.0;
-    _previousRawAffection = 30.0;
-    _affectionIncreasing = null;
     if (isNewFormat) {
-      final cp = _personaProvider!.currentPersona!;
-      cp.affection = 30.0;
-      await DatabaseService.updateAIPersona(cp);
-      if (_emotionState != null) {
-        _emotionState = EmotionState.createDefault(_currentConvId!,
-            initialAffection: 30.0, personaId: cp.id);
-        await DatabaseService.deletePersonaEmotionState(_currentConvId!, cp.id);
-        await DatabaseService.insertPersonaEmotionState(_emotionState!);
-      }
+      await _affm.resetForNewFormat(
+          _currentConvId!, _personaProvider!.currentPersona!);
     } else {
-      if (_emotionState != null) {
-        _emotionState =
-            EmotionState.createDefault(_currentConvId!, initialAffection: 30.0);
-        await DatabaseService.updateEmotionState(_emotionState!);
-      }
+      await _affm.resetForOldFormat(_currentConvId!);
     }
     // Update conversation affection in DB
     final conv = await DatabaseService.getConversation(_currentConvId!);
-    final updated = conv.copyWith(affection: 30);
+    final updated = conv.copyWith(affection: _affm.affection.round());
     await DatabaseService.updateConversation(updated);
 
     notifyListeners();
@@ -624,7 +533,7 @@ class ChatProvider extends ChangeNotifier {
 
     if (_currentConvId == null) {
       final conv = await _convProvider.createConversation(
-          initialAffection: _affection.round(), mode: _mode);
+          initialAffection: _affm.affection.round(), mode: _mode);
       _currentConvId = conv.id;
       if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
         final updated = conv.copyWith(systemPrompt: _systemPrompt);
@@ -655,9 +564,9 @@ class ChatProvider extends ChangeNotifier {
         }
       }
       // Create emotion state for new conversation
-      _emotionState = EmotionState.createDefault(_currentConvId!,
-          initialAffection: _affection);
-      await DatabaseService.insertEmotionState(_emotionState!);
+      _affm.emotionState = EmotionState.createDefault(_currentConvId!,
+          initialAffection: _affm.affection);
+      await DatabaseService.insertEmotionState(_affm.emotionState!);
 
       // Save openingLine to conversation
       if (_openingLine != null && _openingLine!.isNotEmpty) {
@@ -695,10 +604,9 @@ class ChatProvider extends ChangeNotifier {
     }
 
     // Build context via shared ContextBuilder
-    _roundCount++;
+    _affm.roundCount++;
     final safeMode = await AuthService.getAdminSafeMode();
-    final doAffectionJudge = _affectionEnabled && !safeMode &&
-        _roundCount > _roundsUntilAffection;
+    final doAffectionJudge = _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
     // Search knowledge base
     final kbResults = await KnowledgeBase.search(text.trim(), limit: 3);
     final contextMsgs = await ContextBuilder.build(
@@ -707,7 +615,7 @@ class ChatProvider extends ChangeNotifier {
       conversationPrompt: conv.systemPrompt,
       userPersona: _userPersona ?? conv.userPersona,
       worldBackground: _worldBackground ?? conv.worldBackground,
-      emotionState: _emotionState,
+      emotionState: _affm.emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
       messages: _messages,
@@ -718,7 +626,7 @@ class ChatProvider extends ChangeNotifier {
     );
 
     final temp = _affectionEnabled
-        ? 0.5 + (_affection + 15) / 115 * 1.3
+        ? 0.5 + (_affm.affection + 15) / 115 * 1.3
         : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
@@ -729,23 +637,12 @@ class ChatProvider extends ChangeNotifier {
     String? inlineReason;
 
     if (fullContent != null) {
-      // Parse and strip the Δ tag, apply immediately
-      var cleanContent = fullContent;
-      var inlineMatch =
-          RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
-      if (inlineMatch == null) {
-        // Fallback: AI may have inserted text between Δ and the number
-        inlineMatch =
-            RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$').firstMatch(fullContent);
-      }
-      if (inlineMatch != null) {
-        inlineDelta =
-            (double.tryParse(inlineMatch.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
-        inlineReason = inlineMatch.group(2)!.trim();
-        cleanContent =
-            cleanContent.replaceFirst(inlineMatch.group(0)!, '').trimRight();
-        if (cleanContent.isEmpty) cleanContent = fullContent;
-      }
+      // Parse and strip the Δ tag via AffectionManager
+      final parsed = AffectionManager.parseDeltaTag(fullContent);
+      var cleanContent = parsed.cleanContent;
+      inlineDelta = parsed.delta;
+      inlineReason = parsed.reason;
+
       // Update display if Δ tag was stripped from content
       if (cleanContent != fullContent) {
         _messages[_messages.length - 1] =
@@ -755,28 +652,22 @@ class ChatProvider extends ChangeNotifier {
 
       // Update affection from inline Δ tag (skip if safe mode)
       if (inlineDelta != null && !safeMode) {
-        _affection = (_affection + inlineDelta).clamp(-15.0, 100.0);
-        if (_emotionState != null) {
-          _emotionState!.affection = _affection;
-        }
-        if (isNewFormat) {
-          _personaProvider!.currentPersona!.affection = _affection;
-        }
-        await DatabaseService.insertAffectionLog(AffectionLog(
-          id: const Uuid().v4(),
-          conversationId: _currentConvId!,
-          personaId: currentPersonaId,
+        await _affm.applyDelta(
           delta: inlineDelta,
           reason: inlineReason ?? '',
-          createdAt: DateTime.now(),
+          convId: _currentConvId!,
+          personaId: currentPersonaId,
           userMessage: text.trim(),
           aiMessage: cleanContent,
-        ));
+        );
+        if (isNewFormat) {
+          _personaProvider!.currentPersona!.affection = _affm.affection;
+        }
       }
 
       // Update conversation timestamp and affection
       final updatedConv = conv.copyWith(
-          updatedAt: DateTime.now(), affection: _affection.round());
+          updatedAt: DateTime.now(), affection: _affm.affection.round());
       await DatabaseService.updateConversation(updatedConv);
 
       // Parse quick replies embedded in AI response
@@ -809,11 +700,11 @@ class ChatProvider extends ChangeNotifier {
     // Post-processing only on success
     if (fullContent != null) {
       if (inlineDelta != null) {
-        _previousRawAffection = _affection;
+        _affm.previousRawAffection = _affm.affection;
       }
       if (_affectionEnabled &&
-          _analyzer != null &&
-          _emotionState != null &&
+          _affm.analyzer != null &&
+          _affm.emotionState != null &&
           !safeMode) {
         Future.delayed(const Duration(milliseconds: 300),
             () => _doEmotionAnalysis(text.trim()));
@@ -836,85 +727,29 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Unified emotion analysis via unconscious LLM.
-  /// Called after every AI reply. Updates both emotion values and affection.
+  /// Delegates to AffectionManager for all emotion/affection state updates.
   Future<void> _doEmotionAnalysis(String userMessage) async {
-    if (_currentConvId == null ||
-        !_affectionEnabled ||
-        _analyzer == null ||
-        _emotionState == null) return;
+    if (_currentConvId == null || !_affectionEnabled) return;
 
-    try {
-      final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
-      final aiMsgs = allMsgs.where((m) => m.role == 'assistant').toList();
-      final lastAiMsg = aiMsgs.isNotEmpty ? aiMsgs.last.content : '';
+    final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
+    final aiMsgs = allMsgs.where((m) => m.role == 'assistant').toList();
+    final lastAiMsg = aiMsgs.isNotEmpty ? aiMsgs.last.content : '';
+    final history = allMsgs.map((m) => '${m.role}: ${m.content}').join('\n');
 
-      final history = allMsgs.map((m) => '${m.role}: ${m.content}').join('\n');
+    final sensitivity = await AuthService.getEmotionSensitivity();
 
-      final deltas = await _analyzer!.analyzeAndAdjust(
-        state: _emotionState!,
-        history: history,
-        latestMsg: userMessage,
-      );
+    await _affm.analyzeEmotion(
+      userMessage: userMessage,
+      lastAiMessage: lastAiMsg,
+      history: history,
+      convId: _currentConvId!,
+      personaId: currentPersonaId,
+      sensitivity: sensitivity,
+      isNewFormat: isNewFormat,
+      persona: isNewFormat ? _personaProvider?.currentPersona : null,
+    );
 
-      final sensitivity = await AuthService.getEmotionSensitivity();
-
-      // Update 4 emotion values only (affection handled by Δ tag)
-      final lo = (deltas['libido_other_delta'] as double) * sensitivity;
-      final ao = (deltas['aggression_other_delta'] as double) * sensitivity;
-      final ls = (deltas['libido_self_delta'] as double) * sensitivity;
-      final as_ = (deltas['aggression_self_delta'] as double) * sensitivity;
-
-      _emotionState!.currentLibidoOther =
-          (_emotionState!.currentLibidoOther + lo).clamp(0.0, 50.0);
-      _emotionState!.currentAggressionOther =
-          (_emotionState!.currentAggressionOther + ao).clamp(0.0, 50.0);
-      _emotionState!.currentLibidoSelf =
-          (_emotionState!.currentLibidoSelf + ls).clamp(0.0, 50.0);
-      _emotionState!.currentAggressionSelf =
-          (_emotionState!.currentAggressionSelf + as_).clamp(0.0, 50.0);
-
-      _emotionState!.baseLibidoOther = (_emotionState!.baseLibidoOther +
-              (deltas['base_libido_other_delta'] as double) * sensitivity)
-          .clamp(0.0, 50.0);
-      _emotionState!.baseAggressionOther = (_emotionState!.baseAggressionOther +
-              (deltas['base_aggression_other_delta'] as double) * sensitivity)
-          .clamp(0.0, 50.0);
-      _emotionState!.baseLibidoSelf = (_emotionState!.baseLibidoSelf +
-              (deltas['base_libido_self_delta'] as double) * sensitivity)
-          .clamp(0.0, 50.0);
-      _emotionState!.baseAggressionSelf = (_emotionState!.baseAggressionSelf +
-              (deltas['base_aggression_self_delta'] as double) * sensitivity)
-          .clamp(0.0, 50.0);
-
-      _emotionState!.turnCount++;
-      _emotionState!.lastUpdate = DateTime.now();
-      _emotionState!.lastInteraction = DateTime.now();
-
-      await DatabaseService.updateEmotionState(_emotionState!);
-
-      // Log emotion deltas (no affection, no reason — those come from Δ tag)
-      await DatabaseService.insertEmotionLog(EmotionLog(
-        id: const Uuid().v4(),
-        conversationId: _currentConvId!,
-        personaId: currentPersonaId,
-        libidoOtherDelta: lo,
-        aggressionOtherDelta: ao,
-        libidoSelfDelta: ls,
-        aggressionSelfDelta: as_,
-        intensity: (deltas['intensity'] as double),
-        userMessage: userMessage,
-        aiMessage: lastAiMsg,
-      ));
-
-      // Flush persona affection + emotion state for new format
-      if (isNewFormat) {
-        await _flushPersonaAffection();
-      }
-
-      notifyListeners();
-    } catch (e) {
-      debugPrint('[EmotionAnalysis] 潜意识分析失败，下轮重试: $e');
-    }
+    notifyListeners();
   }
 
   /// Mark a quick reply as consumed for this round and return the text.
@@ -949,7 +784,7 @@ class ChatProvider extends ChangeNotifier {
       conversationPrompt: conv.systemPrompt,
       userPersona: _userPersona ?? conv.userPersona,
       worldBackground: _worldBackground ?? conv.worldBackground,
-      emotionState: _emotionState,
+      emotionState: _affm.emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
       messages: _messages,
@@ -959,7 +794,7 @@ class ChatProvider extends ChangeNotifier {
     );
 
     final temp = _affectionEnabled
-        ? 0.5 + (_affection.round() + 15) / 115 * 1.3
+        ? 0.5 + (_affm.affection.round() + 15) / 115 * 1.3
         : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
@@ -1037,7 +872,7 @@ class ChatProvider extends ChangeNotifier {
             ? '用你的口吻，以第一人称写一段日记，回顾以下对话中发生的事。要求：写短一点，写准一点，只挑最重要的写，不要逐句复述。\n\n$archiveText'
             : '请用第一人称总结以下对话要点，写短写准，只抓关键信息：\n\n$archiveText';
 
-        final result = await _service!.chatRaw(userPrompt, systemPrompt);
+        final result = await _service!.chatRaw(userPrompt, systemPrompt, maxTokens: 800);
         final trimmed = result.trim();
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);

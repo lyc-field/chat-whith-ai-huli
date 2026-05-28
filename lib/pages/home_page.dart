@@ -11,8 +11,38 @@ import 'summary_management_page.dart';
 import 'admin_login_page.dart';
 import 'bookmark_management_page.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  int _adminTapCount = 0;
+  Timer? _adminResetTimer;
+
+  void _onTitleIconTap() {
+    _adminTapCount++;
+    _adminResetTimer?.cancel();
+    if (_adminTapCount >= 6) {
+      _adminTapCount = 0;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AdminLoginPage()),
+      );
+      return;
+    }
+    _adminResetTimer = Timer(const Duration(seconds: 3), () {
+      _adminTapCount = 0;
+    });
+  }
+
+  @override
+  void dispose() {
+    _adminResetTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,14 +52,17 @@ class HomePage extends StatelessWidget {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
+            GestureDetector(
+              onTap: _onTitleIconTap,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child:
+                    Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
               ),
-              child:
-                  Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
             ),
             const SizedBox(width: 8),
             Text('小狐爱说话',
@@ -195,8 +228,6 @@ class HomePage extends StatelessWidget {
       setState(() => selectedProvider = provider);
     }
 
-    int _tapCount = 0;
-    Timer? _resetTimer;
     String? _inlineError;
     bool _dialogSaving = false;
     bool _dialogSaved = false;
@@ -281,30 +312,13 @@ class HomePage extends StatelessWidget {
               ),
               actions: [
                 TextButton(
-                    onPressed: () {
-                      _resetTimer?.cancel();
-                      Navigator.pop(outerCtx);
-                    },
+                    onPressed: () => Navigator.pop(outerCtx),
                     child: const Text('关闭')),
                 FilledButton(
                   onPressed: _dialogSaving ? null : () async {
                     final key = keyCtrl.text.trim();
                     if (key.isEmpty) {
-                      _tapCount++;
-                      _resetTimer?.cancel();
-                      if (_tapCount >= 6) {
-                        _tapCount = 0;
-                        Navigator.pop(outerCtx);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const AdminLoginPage()),
-                        );
-                        return;
-                      }
-                      _resetTimer = Timer(const Duration(seconds: 3), () {
-                        _tapCount = 0;
-                      });
+                      setDialogState(() => _inlineError = '请先输入 API Key');
                       return;
                     }
                     setDialogState(() {

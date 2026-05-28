@@ -393,27 +393,6 @@ class DatabaseService {
             "ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
       } catch (_) {}
     }
-    if (oldVersion < 19) {
-      try {
-        await db.execute(
-            "ALTER TABLE conversations ADD COLUMN chat_background TEXT");
-      } catch (_) {}
-    }
-    if (oldVersion < 18) {
-      // v18: add identity/notes to ai_personas, opening_line to conversations
-      try {
-        await db.execute(
-            "ALTER TABLE ai_personas ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE ai_personas ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE conversations ADD COLUMN opening_line TEXT");
-      } catch (_) {}
-    }
     if (oldVersion < 17) {
       try {
         await db.execute('''
@@ -433,6 +412,27 @@ class DatabaseService {
       } catch (e) {
         debugPrint('KB FTS5 init failed (may not be supported on this device): $e');
       }
+    }
+    if (oldVersion < 18) {
+      // v18: add identity/notes to ai_personas, opening_line to conversations
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN identity TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE ai_personas ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+      } catch (_) {}
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN opening_line TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 19) {
+      try {
+        await db.execute(
+            "ALTER TABLE conversations ADD COLUMN chat_background TEXT");
+      } catch (_) {}
     }
   }
 

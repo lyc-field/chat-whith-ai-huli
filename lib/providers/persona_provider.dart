@@ -102,6 +102,16 @@ class PersonaProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Remove a persona from DB and list unconditionally.
+  /// Caller must ensure at least one persona remains after removal.
+  Future<void> removePersona(String id) async {
+    await DatabaseService.deleteAIPersona(id);
+    _personas.removeWhere((p) => p.id == id);
+    if (_currentIndex >= _personas.length) {
+      _currentIndex = _personas.length - 1;
+    }
+  }
+
   /// Delete a persona. Cannot delete the last one — it becomes empty default.
   Future<void> deletePersona(String id) async {
     if (_conversationId == null) return;
