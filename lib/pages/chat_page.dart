@@ -407,6 +407,10 @@ class _ChatPageState extends State<ChatPage> {
               constraints.maxWidth - 60,
               180, // below the tone float button
             );
+            _tuneFabOffset = Offset(
+              16,
+              constraints.maxHeight - 150, // bottom-left area
+            );
             _fabInitialized = true;
           }
           return Stack(
@@ -511,13 +515,21 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
-              // Output length settings button
+              // Draggable output length settings button
               if (provider.currentConvId != null)
                 Positioned(
-                  left: 16,
-                  bottom: 110,
+                  left: _tuneFabOffset.dx.clamp(0, constraints.maxWidth - 40),
+                  top: _tuneFabOffset.dy.clamp(0, constraints.maxHeight - 40),
                   child: GestureDetector(
                     onTap: () => _showOutputLengthDialog(context),
+                    onLongPressStart: (_) => _tuneDragOrigin = Offset.zero,
+                    onLongPressMoveUpdate: (d) {
+                      setState(() {
+                        _tuneFabOffset += d.offsetFromOrigin - _tuneDragOrigin;
+                        _tuneDragOrigin = d.offsetFromOrigin;
+                      });
+                    },
+                    onLongPressEnd: (_) => _tuneDragOrigin = Offset.zero,
                     child: Material(
                       color: Theme.of(context).colorScheme.secondaryContainer,
                       shape: const CircleBorder(),
@@ -571,6 +583,8 @@ class _ChatPageState extends State<ChatPage> {
   Offset _fabOffset = const Offset(-60, -80);
   bool _fabInitialized = false;
   Offset _fabDragOrigin = Offset.zero;
+  Offset _tuneFabOffset = Offset.zero;
+  Offset _tuneDragOrigin = Offset.zero;
 
   Widget _buildSummaryPromptBanner(ChatProvider provider) {
     final theme = Theme.of(context);
