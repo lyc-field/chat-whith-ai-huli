@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/message.dart';
+import '../services/deepseek_service.dart';
 
 class ChatBubble extends StatelessWidget {
   final Message message;
   final bool showTimestamp;
   final ValueChanged<String>? onEdit;
   final VoidCallback? onDelete;
+  final VoidCallback? onRegenerate;
   final VoidCallback? onToggleBookmark;
   final bool archived;
 
@@ -17,6 +19,7 @@ class ChatBubble extends StatelessWidget {
     this.showTimestamp = true,
     this.onEdit,
     this.onDelete,
+    this.onRegenerate,
     this.onToggleBookmark,
     this.archived = false,
   });
@@ -104,10 +107,22 @@ class ChatBubble extends StatelessWidget {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)));
                 }),
-                _ActionButton(icon: Icons.edit_outlined, tooltip: '编辑',
-                    onTap: () => _showEditDialog(context)),
-                _ActionButton(icon: Icons.delete_outline, tooltip: '删除',
-                    onTap: () => _showDeleteDialog(context)),
+                if (isUser) ...[
+                  _ActionButton(icon: Icons.edit_outlined, tooltip: '编辑',
+                      onTap: () => _showEditDialog(context)),
+                  _ActionButton(icon: Icons.delete_outline, tooltip: '撤回',
+                      onTap: () => _showRecallDialog(context)),
+                ],
+                if (!isUser) ...[
+                  _ActionButton(icon: Icons.refresh, tooltip: '重新生成',
+                      onTap: () => _showRegenerateConfirm(context)),
+                  const SizedBox(width: 6),
+                  Text(
+                    '~${DeepSeekService.estimateTokens(message.content)} tok',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: theme.colorScheme.outline.withOpacity(0.5), fontSize: 10),
+                  ),
+                ],
               ]),
             ),
           ],
@@ -140,19 +155,36 @@ class ChatBubble extends StatelessWidget {
     );
   }
 
-  void _showDeleteDialog(BuildContext context) {
+  void _showRecallDialog(BuildContext context) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除消息'),
-        content: const Text('确定要删除这条消息吗？'),
+        title: const Text('撤回消息'),
+        content: const Text('将同时撤回你的这条消息和AI的回复。确定吗？'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () { onDelete?.call(); Navigator.pop(ctx); },
             style: FilledButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.error),
-            child: const Text('删除'),
+            child: const Text('撤回'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRegenerateConfirm(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重新生成'),
+        content: const Text('将删除当前回复，让AI根据上下文重新生成。确定吗？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () { onRegenerate?.call(); Navigator.pop(ctx); },
+            child: const Text('重新生成'),
           ),
         ],
       ),

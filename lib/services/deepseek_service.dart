@@ -36,6 +36,7 @@ class DeepSeekService {
     void Function()? onDone,
     void Function(String error)? onError,
     double temperature = 1.0,
+    int? maxTokens,
   }) async {
     final request = http.Request('POST', Uri.parse(endpoint))
       ..headers.addAll({
@@ -48,6 +49,7 @@ class DeepSeekService {
         'messages': contextMessages,
         'stream': true,
         'temperature': temperature,
+        if (maxTokens != null && maxTokens > 0) 'max_tokens': maxTokens,
       });
 
     final response = await http.Client().send(request);
@@ -155,4 +157,28 @@ class DeepSeekService {
     }
   }
 
+  /// Roughly estimate token count from text.
+  /// Chinese/CJK characters ≈ 1.5 tokens each, other chars ≈ 0.25 tokens each.
+  static int estimateTokens(String text) {
+    int cjk = 0;
+    int other = 0;
+    for (int i = 0; i < text.length; i++) {
+      final c = text.codeUnitAt(i);
+      if ((c >= 0x4E00 && c <= 0x9FFF) ||
+          (c >= 0x3400 && c <= 0x4DBF) ||
+          (c >= 0xF900 && c <= 0xFAFF) ||
+          (c >= 0x20000 && c <= 0x2FFFF)) {
+        cjk++;
+      } else if (c > 0x7F) {
+        cjk++;
+      } else {
+        other++;
+      }
+    }
+    return (cjk * 1.5 + other * 0.25).ceil();
+  }
+
+  /// Convert user-specified max character count to a safe max_tokens value.
+  /// Uses 2× multiplier as upper bound for Chinese text.
+  static int charsToMaxTokens(int chars) => (chars * 2.0).ceil();
 }

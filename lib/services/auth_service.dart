@@ -224,4 +224,27 @@ class AuthService {
   static bool supportsAffection(String providerType) {
     return providerType == 'deepseek';
   }
+
+  // ─── Output length config ────────
+
+  static const _minOutputCharsKey = 'min_output_chars';
+  static const _maxOutputCharsKey = 'max_output_chars';
+
+  static Future<int> getMinOutputChars() async {
+    final v = await DatabaseService.getSetting(_minOutputCharsKey);
+    return int.tryParse(v ?? '') ?? 0;
+  }
+
+  static Future<void> setMinOutputChars(int value) async {
+    await DatabaseService.saveSetting(_minOutputCharsKey, value.toString());
+  }
+
+  static Future<int> getMaxOutputChars() async {
+    final v = await DatabaseService.getSetting(_maxOutputCharsKey);
+    return int.tryParse(v ?? '') ?? 0;
+  }
+
+  static Future<void> setMaxOutputChars(int value) async {
+    await DatabaseService.saveSetting(_maxOutputCharsKey, value.toString());
+  }
 }

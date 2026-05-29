@@ -49,6 +49,10 @@ class ChatProvider extends ChangeNotifier {
   // Auto-continue mode (AI keeps talking)
   bool _isContinuing = false;
 
+  // Recall limit
+  static const _maxRecalls = 3;
+  int _recallCount = 0;
+
   List<Message> get messages => _messages;
   List<SegmentSummary> get segments => _segments;
   bool get isPending => _isPending;
@@ -74,6 +78,7 @@ class ChatProvider extends ChangeNotifier {
   List<String> get quickReplies => _quickReplies;
   int? get quickReplyMessageIndex => _quickReplyMessageIndex;
   bool get isContinuing => _isContinuing;
+  int get remainingRecalls => (_maxRecalls - _recallCount).clamp(0, _maxRecalls);
   bool get isNewFormat {
     final pp = _personaProvider;
     return pp != null && pp.personas.isNotEmpty;
@@ -156,6 +161,7 @@ class ChatProvider extends ChangeNotifier {
     _personaProvider?.prepareForConversation(convId);
     _messages = await DatabaseService.getMessages(convId);
     _segments = await DatabaseService.getSegmentSummaries(convId);
+    await _loadRecallCount();
     final conv = await DatabaseService.getConversation(convId);
     _systemPrompt = conv.systemPrompt;
     _userPersona = conv.userPersona;
@@ -216,6 +222,7 @@ class ChatProvider extends ChangeNotifier {
     _pendingSummaryIndex = null;
     _quickReplies = [];
     _quickReplyMessageIndex = null;
+    _recallCount = 0;
     _affm.reset();
     notifyListeners();
   }
@@ -394,12 +401,68 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _loadRecallCount() async {
+    if (_currentConvId == null) {
+      _recallCount = 0;
+      return;
+    }
+    final v = await DatabaseService.getSetting('recall_count_$_currentConvId');
+    _recallCount = int.tryParse(v ?? '') ?? 0;
+  }
+
+  Future<void> _bumpRecallCount() async {
+    if (_currentConvId == null) return;
+    _recallCount++;
+    await DatabaseService.saveSetting('recall_count_$_currentConvId', _recallCount.toString());
+  }
+
+  Future<void> _clearRecallCount() async {
+    if (_currentConvId == null) return;
+    _recallCount = 0;
+    await DatabaseService.saveSetting('recall_count_$_currentConvId', '0');
+  }
+
   Future<void> deleteMessage(int index) async {
     if (index < 0 || index >= _messages.length) return;
     final msg = _messages[index];
-    await DatabaseService.deleteMessage(msg.id);
+    // For user messages: also delete the following AI reply (recall both)
+    if (msg.role == 'user' && index + 1 < _messages.length) {
+      final next = _messages[index + 1];
+      if (next.role == 'assistant') {
+        if (_recallCount >= _maxRecalls) return;
+        await _bumpRecallCount();
+        final nextMsg = _messages.removeAt(index + 1);
+        await DatabaseService.deleteMessage(nextMsg.id);
+      }
+    }
     _messages.removeAt(index);
+    await DatabaseService.deleteMessage(msg.id);
     notifyListeners();
+  }
+
+  /// Regenerate the AI response: remove this AI message, then re-stream using
+  /// the existing user message (no duplicate user message insertion).
+  Future<void> regenerateResponse(int aiMessageIndex) async {
+    if (_isPending || _currentConvId == null) return;
+    if (aiMessageIndex < 0 || aiMessageIndex >= _messages.length) return;
+    if (_messages[aiMessageIndex].role != 'assistant') return;
+
+    // Find the user message that immediately precedes this AI response
+    String? userText;
+    for (int i = aiMessageIndex - 1; i >= 0; i--) {
+      if (_messages[i].role == 'user') {
+        userText = _messages[i].content;
+        break;
+      }
+    }
+    if (userText == null) return;
+
+    // Remove just this AI message (not trailing messages — those are later rounds)
+    final removed = _messages.removeAt(aiMessageIndex);
+    await DatabaseService.deleteMessage(removed.id);
+
+    // Stream a new AI reply (appended at end; context includes all remaining messages)
+    await _processAndStreamReply(userText);
   }
 
   Future<void> resetConversation() async {
@@ -416,6 +479,7 @@ class ChatProvider extends ChangeNotifier {
     _messages = [];
     _segments = [];
     _isPending = false;
+    await _clearRecallCount();
     _streamingContent = '';
     _error = null;
     _showSummaryPrompt = false;
@@ -472,6 +536,7 @@ class ChatProvider extends ChangeNotifier {
   Future<String?> _streamAssistantReply({
     required List<Map<String, dynamic>> contextMsgs,
     required double temperature,
+    int? maxTokens,
   }) async {
     final assistantMsg = Message(
       conversationId: _currentConvId!,
@@ -485,6 +550,7 @@ class ChatProvider extends ChangeNotifier {
       final fullContent = await _service!.streamChatRaw(
         contextMessages: contextMsgs,
         temperature: temperature,
+        maxTokens: maxTokens,
         onToken: (token) {
           _streamingContent += token;
           var display = _streamingContent;
@@ -515,6 +581,135 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Shared AI reply pipeline: build context, apply output limits, stream,
+  /// post-process (delta / affection / quick-reply / archive / emotion).
+  /// Does NOT insert a user message — the caller must ensure _messages
+  /// already ends with the triggering user message.
+  Future<void> _processAndStreamReply(String userText) async {
+    _error = null;
+    final conv = await DatabaseService.getConversation(_currentConvId!);
+    final safeMode = await AuthService.getAdminSafeMode();
+    final doAffectionJudge = _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
+    final kbResults = await KnowledgeBase.search(userText, limit: 3);
+    final contextMsgs = await ContextBuilder.build(
+      conversationId: _currentConvId!,
+      systemPrompt: _systemPrompt,
+      conversationPrompt: conv.systemPrompt,
+      userPersona: _userPersona ?? conv.userPersona,
+      worldBackground: _worldBackground ?? conv.worldBackground,
+      emotionState: _affm.emotionState,
+      affectionEnabled: _affectionEnabled,
+      mode: _mode,
+      messages: _messages,
+      segments: _segments,
+      kbResults: kbResults,
+      injectDeltaTag: doAffectionJudge,
+      injectQuickReply: _affectionEnabled,
+    );
+
+    // Output length limits
+    final minChars = await AuthService.getMinOutputChars();
+    final maxChars = await AuthService.getMaxOutputChars();
+    int? maxTokens;
+    if (maxChars > 0) {
+      maxTokens = DeepSeekService.charsToMaxTokens(maxChars);
+    }
+    if (minChars > 0) {
+      int insertAt = contextMsgs.length;
+      for (int i = 0; i < contextMsgs.length; i++) {
+        final role = contextMsgs[i]['role'] as String?;
+        if (role == 'user' || role == 'assistant') {
+          insertAt = i;
+          break;
+        }
+      }
+      contextMsgs.insert(insertAt, {
+        'role': 'system',
+        'content': '请确保你的回复不少于$minChars个汉字。',
+      });
+    }
+
+    final temp = _affectionEnabled
+        ? 0.5 + (_affm.affection + 15) / 115 * 1.3
+        : 1.5;
+    final fullContent = await _streamAssistantReply(
+      contextMsgs: contextMsgs,
+      temperature: temp,
+      maxTokens: maxTokens,
+    );
+
+    double? inlineDelta;
+    String? inlineReason;
+
+    if (fullContent != null) {
+      final parsed = AffectionManager.parseDeltaTag(fullContent);
+      var cleanContent = parsed.cleanContent;
+      inlineDelta = parsed.delta;
+      inlineReason = parsed.reason;
+
+      if (cleanContent != fullContent) {
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(content: cleanContent);
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+      }
+
+      if (inlineDelta != null && !safeMode) {
+        await _affm.applyDelta(
+          delta: inlineDelta,
+          reason: inlineReason ?? '',
+          convId: _currentConvId!,
+          personaId: currentPersonaId,
+          userMessage: userText,
+          aiMessage: cleanContent,
+        );
+        if (isNewFormat) {
+          _personaProvider!.currentPersona!.affection = _affm.affection;
+        }
+      }
+
+      final updatedConv = conv.copyWith(
+          updatedAt: DateTime.now(), affection: _affm.affection.round());
+      await DatabaseService.updateConversation(updatedConv);
+
+      final qr = _parseQuickReplies(cleanContent);
+      if (qr != null) {
+        final qrIdx = cleanContent.indexOf('\n[快捷回复]');
+        cleanContent = cleanContent.substring(0, qrIdx).trimRight();
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(
+          content: cleanContent,
+          quickReplies: qr,
+        );
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+        _quickReplies = qr;
+        _quickReplyMessageIndex = _messages.length - 1;
+      } else {
+        _quickReplies = [];
+        _quickReplyMessageIndex = null;
+      }
+    }
+
+    _isPending = false;
+    _streamingContent = '';
+
+    await _maybeArchiveSegment();
+
+    notifyListeners();
+
+    if (fullContent != null) {
+      if (inlineDelta != null) {
+        _affm.previousRawAffection = _affm.affection;
+      }
+      if (_affectionEnabled &&
+          _affm.analyzer != null &&
+          _affm.emotionState != null &&
+          !safeMode) {
+        Future.delayed(const Duration(milliseconds: 300),
+            () => _doEmotionAnalysis(userText));
+      }
+    }
+  }
+
   Future<void> sendMessage(String text) async {
     if (text.trim().isEmpty || _isPending) return;
     if (_service == null) {
@@ -535,6 +730,7 @@ class ChatProvider extends ChangeNotifier {
       final conv = await _convProvider.createConversation(
           initialAffection: _affm.affection.round(), mode: _mode);
       _currentConvId = conv.id;
+      _recallCount = 0; // fresh conversation — no recalls used yet
       if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
         final updated = conv.copyWith(systemPrompt: _systemPrompt);
         await DatabaseService.updateConversation(updated);
@@ -603,113 +799,9 @@ class ChatProvider extends ChangeNotifier {
       await _convProvider.updateTitle(_currentConvId!, title);
     }
 
-    // Build context via shared ContextBuilder
+    // Increment round count, then delegate to shared reply pipeline
     _affm.roundCount++;
-    final safeMode = await AuthService.getAdminSafeMode();
-    final doAffectionJudge = _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
-    // Search knowledge base
-    final kbResults = await KnowledgeBase.search(text.trim(), limit: 3);
-    final contextMsgs = await ContextBuilder.build(
-      conversationId: _currentConvId!,
-      systemPrompt: _systemPrompt,
-      conversationPrompt: conv.systemPrompt,
-      userPersona: _userPersona ?? conv.userPersona,
-      worldBackground: _worldBackground ?? conv.worldBackground,
-      emotionState: _affm.emotionState,
-      affectionEnabled: _affectionEnabled,
-      mode: _mode,
-      messages: _messages,
-      segments: _segments,
-      kbResults: kbResults,
-      injectDeltaTag: doAffectionJudge,
-      injectQuickReply: _affectionEnabled,
-    );
-
-    final temp = _affectionEnabled
-        ? 0.5 + (_affm.affection + 15) / 115 * 1.3
-        : 1.5;
-    final fullContent = await _streamAssistantReply(
-      contextMsgs: contextMsgs,
-      temperature: temp,
-    );
-
-    double? inlineDelta;
-    String? inlineReason;
-
-    if (fullContent != null) {
-      // Parse and strip the Δ tag via AffectionManager
-      final parsed = AffectionManager.parseDeltaTag(fullContent);
-      var cleanContent = parsed.cleanContent;
-      inlineDelta = parsed.delta;
-      inlineReason = parsed.reason;
-
-      // Update display if Δ tag was stripped from content
-      if (cleanContent != fullContent) {
-        _messages[_messages.length - 1] =
-            _messages[_messages.length - 1].copyWith(content: cleanContent);
-        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
-      }
-
-      // Update affection from inline Δ tag (skip if safe mode)
-      if (inlineDelta != null && !safeMode) {
-        await _affm.applyDelta(
-          delta: inlineDelta,
-          reason: inlineReason ?? '',
-          convId: _currentConvId!,
-          personaId: currentPersonaId,
-          userMessage: text.trim(),
-          aiMessage: cleanContent,
-        );
-        if (isNewFormat) {
-          _personaProvider!.currentPersona!.affection = _affm.affection;
-        }
-      }
-
-      // Update conversation timestamp and affection
-      final updatedConv = conv.copyWith(
-          updatedAt: DateTime.now(), affection: _affm.affection.round());
-      await DatabaseService.updateConversation(updatedConv);
-
-      // Parse quick replies embedded in AI response
-      final qr = _parseQuickReplies(cleanContent);
-      if (qr != null) {
-        // Strip quick-reply block from already Δ-cleaned content
-        final qrIdx = cleanContent.indexOf('\n[快捷回复]');
-        cleanContent = cleanContent.substring(0, qrIdx).trimRight();
-        _messages[_messages.length - 1] =
-            _messages[_messages.length - 1].copyWith(
-          content: cleanContent,
-          quickReplies: qr,
-        );
-        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
-        _quickReplies = qr;
-        _quickReplyMessageIndex = _messages.length - 1;
-      } else {
-        _quickReplies = [];
-        _quickReplyMessageIndex = null;
-      }
-    }
-
-    _isPending = false;
-    _streamingContent = '';
-
-    await _maybeArchiveSegment();
-
-    notifyListeners();
-
-    // Post-processing only on success
-    if (fullContent != null) {
-      if (inlineDelta != null) {
-        _affm.previousRawAffection = _affm.affection;
-      }
-      if (_affectionEnabled &&
-          _affm.analyzer != null &&
-          _affm.emotionState != null &&
-          !safeMode) {
-        Future.delayed(const Duration(milliseconds: 300),
-            () => _doEmotionAnalysis(text.trim()));
-      }
-    }
+    await _processAndStreamReply(text.trim());
   }
 
   /// Parse quick-reply block from AI response.
@@ -793,12 +885,35 @@ class ChatProvider extends ChangeNotifier {
       injectContinue: true,
     );
 
+    // Output length limits
+    final minCharsCont = await AuthService.getMinOutputChars();
+    final maxCharsCont = await AuthService.getMaxOutputChars();
+    int? maxTokensCont;
+    if (maxCharsCont > 0) {
+      maxTokensCont = DeepSeekService.charsToMaxTokens(maxCharsCont);
+    }
+    if (minCharsCont > 0) {
+      int insertAt = contextMsgs.length;
+      for (int i = 0; i < contextMsgs.length; i++) {
+        final role = contextMsgs[i]['role'] as String?;
+        if (role == 'user' || role == 'assistant') {
+          insertAt = i;
+          break;
+        }
+      }
+      contextMsgs.insert(insertAt, {
+        'role': 'system',
+        'content': '请确保你的回复不少于$minCharsCont个汉字。',
+      });
+    }
+
     final temp = _affectionEnabled
         ? 0.5 + (_affm.affection.round() + 15) / 115 * 1.3
         : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
+      maxTokens: maxTokensCont,
     );
 
     if (fullContent != null) {

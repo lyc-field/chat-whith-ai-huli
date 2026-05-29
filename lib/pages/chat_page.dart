@@ -6,6 +6,7 @@ import '../models/segment_summary.dart';
 import '../providers/chat_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../providers/persona_provider.dart';
+import '../services/auth_service.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/tone_float_button.dart';
@@ -138,6 +139,67 @@ class _ChatPageState extends State<ChatPage> {
               );
             },
             child: const Text('确定重置'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showOutputLengthDialog(BuildContext context) async {
+    final minC = await AuthService.getMinOutputChars();
+    final maxC = await AuthService.getMaxOutputChars();
+    final minCtrl = TextEditingController(text: minC > 0 ? minC.toString() : '');
+    final maxCtrl = TextEditingController(text: maxC > 0 ? maxC.toString() : '');
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('输出字数限制'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: minCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '最少字数',
+                hintText: '0 = 不限制',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: maxCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '最多字数',
+                hintText: '0 = 不限制',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text('0 表示不限制。中文 1 字约等于 2 token，软件自动换算。',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(ctx).colorScheme.outline)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () async {
+              final minVal = int.tryParse(minCtrl.text.trim()) ?? 0;
+              final maxVal = int.tryParse(maxCtrl.text.trim()) ?? 0;
+              if (minVal > 0 && maxVal > 0 && minVal > maxVal) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('最少字数不能大于最多字数'), duration: Duration(seconds: 2)),
+                );
+                return;
+              }
+              await AuthService.setMinOutputChars(minVal.clamp(0, 10000));
+              await AuthService.setMaxOutputChars(maxVal.clamp(0, 10000));
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('保存'),
           ),
         ],
       ),
@@ -449,6 +511,29 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
+              // Output length settings button
+              if (provider.currentConvId != null)
+                Positioned(
+                  left: 16,
+                  bottom: 110,
+                  child: GestureDetector(
+                    onTap: () => _showOutputLengthDialog(context),
+                    child: Material(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      shape: const CircleBorder(),
+                      elevation: 4,
+                      shadowColor: Colors.black38,
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        alignment: Alignment.center,
+                        child: Icon(Icons.tune,
+                            size: 18,
+                            color: Theme.of(context).colorScheme.onSecondaryContainer),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },
@@ -569,10 +654,15 @@ class _ChatPageState extends State<ChatPage> {
                     ChatBubble(
                       message: msg,
                       archived: msg.segmentIndex != null,
-                      onEdit: msg.content.isNotEmpty
-                          ? (c) => provider.editMessage(item.messageIndex!, c)
-                          : null,
-                      onDelete: () => provider.deleteMessage(item.messageIndex!),
+                      onEdit: isAi || msg.segmentIndex != null || msg.content.isEmpty
+                          ? null
+                          : (c) => provider.editMessage(item.messageIndex!, c),
+                      onDelete: isAi || msg.segmentIndex != null || provider.remainingRecalls <= 0
+                          ? null
+                          : () => provider.deleteMessage(item.messageIndex!),
+                      onRegenerate: !isAi || msg.segmentIndex != null || msg.content.isEmpty
+                          ? null
+                          : () => provider.regenerateResponse(item.messageIndex!),
                       onToggleBookmark: _mode == 'bookmark' &&
                               msg.role != 'system' &&
                               msg.content.isNotEmpty

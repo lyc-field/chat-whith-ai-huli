@@ -72,8 +72,11 @@ class ContextBuilder {
       });
     }
 
-    // 3. Segment summaries
-    for (final seg in segments) {
+    // 3. Segment summaries — only latest 8 to avoid context bloat
+    final latestSegments = segments.length > 8
+        ? segments.sublist(segments.length - 8)
+        : segments;
+    for (final seg in latestSegments) {
       if (seg.content.trim().isNotEmpty) {
         contextMsgs.add({
           'role': 'system',
