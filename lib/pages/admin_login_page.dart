@@ -24,10 +24,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   }
 
   Future<void> _loadSaved() async {
-    final savedAccount = await DatabaseService.getSetting('saved_admin_account');
+    final savedAccount =
+        await DatabaseService.getSetting('saved_admin_account');
     final savedPw = await DatabaseService.getSetting('saved_admin_password');
-    final autoLogin = savedAccount != null && savedAccount.isNotEmpty &&
-        savedPw != null && savedPw.isNotEmpty;
+    final autoLogin = savedAccount != null &&
+        savedAccount.isNotEmpty &&
+        savedPw != null &&
+        savedPw.isNotEmpty;
     if (autoLogin) {
       _accountController.text = savedAccount;
       _passwordController.text = savedPw;
@@ -36,6 +39,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       final ok = await AuthService.verifyAdmin(savedAccount, savedPw);
       if (mounted) {
         if (ok) {
+          await AuthService.markAdminLoggedEver();
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (_) => const AdminPanelPage()),
@@ -69,6 +73,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     final ok = await AuthService.verifyAdmin(account, password);
     if (!mounted) return;
     if (ok) {
+      await AuthService.markAdminLoggedEver();
       if (_rememberMe) {
         await DatabaseService.saveSetting('saved_admin_account', account);
         await DatabaseService.saveSetting('saved_admin_password', password);
@@ -98,7 +103,8 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.admin_panel_settings, size: 56, color: Colors.grey),
+              const Icon(Icons.admin_panel_settings,
+                  size: 56, color: Colors.grey),
               const SizedBox(height: 24),
               TextField(
                 controller: _accountController,
@@ -132,7 +138,10 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
               ]),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 13)),
+                Text(_error!,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 13)),
               ],
               const SizedBox(height: 24),
               SizedBox(

@@ -13,6 +13,7 @@ class Conversation {
   final String? avatarPath;
   final String? chatBackground;
   final int affection;
+  final bool eroticMode;
   final String mode; // 'summary' or 'bookmark'
 
   Conversation({
@@ -28,6 +29,7 @@ class Conversation {
     this.avatarPath,
     this.chatBackground,
     this.affection = 30,
+    this.eroticMode = false,
     this.mode = 'summary',
   });
 
@@ -44,6 +46,7 @@ class Conversation {
       'avatar_path': avatarPath,
       'chat_background': chatBackground,
       'affection': affection,
+      'erotic_mode': eroticMode ? 1 : 0,
       'mode': mode,
     };
   }
@@ -61,6 +64,7 @@ class Conversation {
       avatarPath: map['avatar_path'] as String?,
       chatBackground: map['chat_background'] as String?,
       affection: map['affection'] as int? ?? 30,
+      eroticMode: (map['erotic_mode'] as int?) == 1,
       mode: (map['mode'] as String?) ?? 'summary',
     );
   }
@@ -76,6 +80,7 @@ class Conversation {
     String? avatarPath,
     String? chatBackground,
     int? affection,
+    bool? eroticMode,
     String? mode,
   }) {
     return Conversation(
@@ -91,6 +96,7 @@ class Conversation {
       avatarPath: avatarPath ?? this.avatarPath,
       chatBackground: chatBackground ?? this.chatBackground,
       affection: affection ?? this.affection,
+      eroticMode: eroticMode ?? this.eroticMode,
       mode: mode ?? this.mode,
     );
   }

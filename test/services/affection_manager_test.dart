@@ -33,7 +33,8 @@ void main() {
       final result = AffectionManager.parseDeltaTag(
         'This is a normal response without any delta tag.',
       );
-      expect(result.cleanContent, 'This is a normal response without any delta tag.');
+      expect(result.cleanContent,
+          'This is a normal response without any delta tag.');
       expect(result.delta, isNull);
       expect(result.reason, isNull);
     });
@@ -76,6 +77,30 @@ void main() {
   });
 
   group('AffectionManager state', () {
+    test('uses persona emotion state only for a new-format persona', () {
+      expect(
+        AffectionManager.shouldUsePersonaEmotionState(
+          isNewFormat: true,
+          personaId: 'persona-1',
+        ),
+        isTrue,
+      );
+      expect(
+        AffectionManager.shouldUsePersonaEmotionState(
+          isNewFormat: true,
+          personaId: null,
+        ),
+        isFalse,
+      );
+      expect(
+        AffectionManager.shouldUsePersonaEmotionState(
+          isNewFormat: false,
+          personaId: 'persona-1',
+        ),
+        isFalse,
+      );
+    });
+
     test('default values are correct', () {
       final mgr = AffectionManager();
       expect(mgr.affection, 30.0);

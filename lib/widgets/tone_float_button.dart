@@ -4,7 +4,9 @@ import '../services/auth_service.dart';
 /// Draggable floating button for quick reply tone switching.
 /// Long-press to drag, tap to show tone picker.
 class ToneFloatButton extends StatefulWidget {
-  const ToneFloatButton({super.key});
+  final bool eroticMode;
+
+  const ToneFloatButton({super.key, this.eroticMode = false});
 
   @override
   State<ToneFloatButton> createState() => _ToneFloatButtonState();
@@ -27,9 +29,12 @@ class _ToneFloatButtonState extends State<ToneFloatButton> {
 
   IconData _toneIcon() {
     switch (_tone) {
-      case '下流': return Icons.whatshot;
-      case '优雅': return Icons.auto_awesome;
-      default:    return Icons.chat_bubble_outline;
+      case '下流':
+        return Icons.whatshot;
+      case '优雅':
+        return Icons.auto_awesome;
+      default:
+        return Icons.chat_bubble_outline;
     }
   }
 
@@ -42,14 +47,14 @@ class _ToneFloatButtonState extends State<ToneFloatButton> {
     final centerY = screenHeight / 2;
 
     // Direction: toward screen center from the button.
-    final toLeft = _x + 21 > centerX;   // button is right of center → pop left
-    final toTop  = _y + 21 > centerY;   // button is below center → pop up
+    final toLeft = _x + 21 > centerX; // button is right of center → pop left
+    final toTop = _y + 21 > centerY; // button is below center → pop up
 
     // Picker position anchored to button edge.
     double pickerLeft = toLeft ? _x - 156 : _x + 50;
-    double pickerTop  = toTop  ? _y - 40 : _y + 50;
+    double pickerTop = toTop ? _y - 40 : _y + 50;
     pickerLeft = pickerLeft.clamp(8.0, screenWidth - 164);
-    pickerTop  = pickerTop.clamp(8.0, screenHeight - 56);
+    pickerTop = pickerTop.clamp(8.0, screenHeight - 56);
 
     late OverlayEntry entry;
     entry = OverlayEntry(
@@ -66,7 +71,8 @@ class _ToneFloatButtonState extends State<ToneFloatButton> {
                 elevation: 6,
                 borderRadius: BorderRadius.circular(20),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surface,
                     borderRadius: BorderRadius.circular(20),
@@ -78,10 +84,12 @@ class _ToneFloatButtonState extends State<ToneFloatButton> {
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),
                         child: ChoiceChip(
-                          label: Text(t, style: TextStyle(fontSize: 12,
-                              color: selected
-                                  ? theme.colorScheme.onPrimary
-                                  : theme.colorScheme.onSurface)),
+                          label: Text(t,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: selected
+                                      ? theme.colorScheme.onPrimary
+                                      : theme.colorScheme.onSurface)),
                           selected: selected,
                           selectedColor: theme.colorScheme.primary,
                           onSelected: (_) {
@@ -128,15 +136,24 @@ class _ToneFloatButtonState extends State<ToneFloatButton> {
         child: Material(
           elevation: 4,
           borderRadius: BorderRadius.circular(20),
-          color: Theme.of(context).colorScheme.secondaryContainer,
+          color: widget.eroticMode
+              ? Color.alphaBlend(
+                  const Color(0xFFFF4FA0).withOpacity(0.28),
+                  Theme.of(context).colorScheme.secondaryContainer,
+                )
+              : Theme.of(context).colorScheme.secondaryContainer,
           child: Container(
-            width: 42, height: 42,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                  color: Theme.of(context).colorScheme.outline.withOpacity(0.2)),
+                  color: widget.eroticMode
+                      ? const Color(0xFFFF4FA0).withOpacity(0.4)
+                      : Theme.of(context).colorScheme.outline.withOpacity(0.2)),
             ),
-            child: Icon(_toneIcon(), size: 20,
+            child: Icon(_toneIcon(),
+                size: 20,
                 color: Theme.of(context).colorScheme.onSecondaryContainer),
           ),
         ),

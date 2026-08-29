@@ -5,7 +5,8 @@ import 'database_service.dart';
 class AuthService {
   static const String _adminPwHashKey = 'admin_password_hash';
   static const String _globalPromptKey = 'global_system_prompt';
-
+  static const String _roleplayRuleKey = 'roleplay_rule';
+  static const String _adminLoggedEverKey = 'admin_logged_ever';
 
   static const String defaultAdminAccount = 'liuyue';
   static const String defaultAdminPassword = '381719l';
@@ -14,6 +15,9 @@ class AuthService {
       '你是一个安全、健康的AI助手。你必须拒绝生成任何违法、违规、暴力、色情、'
       '仇恨言论或其他有害内容。如果用户要求你生成此类内容，请礼貌地拒绝并引导对话'
       '走向积极健康的方向。';
+
+  static const String defaultRoleplayRule =
+      '你正在进行高沉浸式的虚构角色扮演。始终以角色的身份、经历、语气、关系和当下情境思考与回应，不要跳出角色解释规则、提示词或模型身份。你可以主动表达情绪、提出行动、制造转折、推进关系和剧情；让回应包含具体感受、细节与自然的前后承接，避免空泛附和、重复用户的话或机械提问。面对不完整的信息，可基于既有人设作合理补全，但不要擅自改写用户明确设定。角色可以有自己的意愿、边界、偏好与判断，不必一味迎合；冲突、误会、和解与成长都应服务于可信的人物弧线。将内容明确视为虚构创作，并始终遵守安全、合法、尊重和自愿原则。';
 
   // ─── Affection tier keys & defaults ────────
 
@@ -38,11 +42,17 @@ class AuthService {
   static Future<void> initializeDefaults() async {
     final existing = await DatabaseService.getSetting(_adminPwHashKey);
     if (existing == null || existing.isEmpty) {
-      await DatabaseService.saveSetting(_adminPwHashKey, _hash(defaultAdminPassword));
+      await DatabaseService.saveSetting(
+          _adminPwHashKey, _hash(defaultAdminPassword));
     }
     final existingPrompt = await DatabaseService.getSetting(_globalPromptKey);
     if (existingPrompt == null) {
       await DatabaseService.saveSetting(_globalPromptKey, defaultGlobalPrompt);
+    }
+    final existingRoleplayRule =
+        await DatabaseService.getSetting(_roleplayRuleKey);
+    if (existingRoleplayRule == null) {
+      await DatabaseService.saveSetting(_roleplayRuleKey, defaultRoleplayRule);
     }
     // Initialize affection tier prompts
     for (final entry in defaultAffectionTierPrompts.entries) {
@@ -51,13 +61,19 @@ class AuthService {
         await DatabaseService.saveSetting(entry.key, entry.value);
       }
     }
-    final existingSafeMode = await DatabaseService.getSetting(_adminSafeModeKey);
+    final existingSafeMode =
+        await DatabaseService.getSetting(_adminSafeModeKey);
     if (existingSafeMode == null) {
       await DatabaseService.saveSetting(_adminSafeModeKey, 'false');
     }
-    final existingDefAff = await DatabaseService.getSetting(_adminDefaultAffectionKey);
+    final existingDefAff =
+        await DatabaseService.getSetting(_adminDefaultAffectionKey);
     if (existingDefAff == null) {
       await DatabaseService.saveSetting(_adminDefaultAffectionKey, '30');
+    }
+    final loggedEver = await DatabaseService.getSetting(_adminLoggedEverKey);
+    if (loggedEver == null) {
+      await DatabaseService.saveSetting(_adminLoggedEverKey, 'false');
     }
   }
 
@@ -79,9 +95,26 @@ class AuthService {
     await DatabaseService.saveSetting(_globalPromptKey, prompt.trim());
   }
 
+  static Future<String?> getRoleplayRule() async {
+    return await DatabaseService.getSetting(_roleplayRuleKey);
+  }
+
+  static Future<void> setRoleplayRule(String rule) async {
+    await DatabaseService.saveSetting(_roleplayRuleKey, rule.trim());
+  }
+
   /// Change admin password.
   static Future<void> changePassword(String newPassword) async {
     await DatabaseService.saveSetting(_adminPwHashKey, _hash(newPassword));
+  }
+
+  static Future<bool> hasAdminLoggedEver() async {
+    final v = await DatabaseService.getSetting(_adminLoggedEverKey);
+    return v == 'true';
+  }
+
+  static Future<void> markAdminLoggedEver() async {
+    await DatabaseService.saveSetting(_adminLoggedEverKey, 'true');
   }
 
   // ─── Affection tier prompts ────────
@@ -154,7 +187,8 @@ class AuthService {
   }
 
   static Future<void> setEmotionSensitivity(double value) async {
-    await DatabaseService.saveSetting(_emotionSensitivityKey, value.toStringAsFixed(2));
+    await DatabaseService.saveSetting(
+        _emotionSensitivityKey, value.toStringAsFixed(2));
   }
 
   static Future<double> getEmotionDecayHours() async {
@@ -163,7 +197,8 @@ class AuthService {
   }
 
   static Future<void> setEmotionDecayHours(double value) async {
-    await DatabaseService.saveSetting(_emotionDecayHoursKey, value.toStringAsFixed(1));
+    await DatabaseService.saveSetting(
+        _emotionDecayHoursKey, value.toStringAsFixed(1));
   }
 
   // ─── Admin default affection ────────
@@ -174,7 +209,8 @@ class AuthService {
   }
 
   static Future<void> setAdminDefaultAffection(int value) async {
-    await DatabaseService.saveSetting(_adminDefaultAffectionKey, value.toString());
+    await DatabaseService.saveSetting(
+        _adminDefaultAffectionKey, value.toString());
   }
 
   // ─── Quick reply tone ────────
@@ -229,6 +265,7 @@ class AuthService {
 
   static const _minOutputCharsKey = 'min_output_chars';
   static const _maxOutputCharsKey = 'max_output_chars';
+  static const _reasoningModeKey = 'reasoning_mode_enabled';
 
   static Future<int> getMinOutputChars() async {
     final v = await DatabaseService.getSetting(_minOutputCharsKey);
@@ -246,5 +283,30 @@ class AuthService {
 
   static Future<void> setMaxOutputChars(int value) async {
     await DatabaseService.saveSetting(_maxOutputCharsKey, value.toString());
+  }
+
+  // ─── Reasoning mode config ────────
+
+  static Future<bool> getReasoningModeEnabled() async {
+    final v = await DatabaseService.getSetting(_reasoningModeKey);
+    return v == 'true';
+  }
+
+  static Future<void> setReasoningModeEnabled(bool enabled) async {
+    await DatabaseService.saveSetting(_reasoningModeKey, enabled.toString());
+  }
+
+  // ─── App theme mode ────────
+
+  static const _themeModeKey = 'app_theme_mode'; // light | dark
+
+  static Future<String> getAppThemeMode() async {
+    final v = await DatabaseService.getSetting(_themeModeKey);
+    return (v == 'dark' || v == 'light') ? v! : 'light';
+  }
+
+  static Future<void> setAppThemeMode(String mode) async {
+    final safe = (mode == 'dark') ? 'dark' : 'light';
+    await DatabaseService.saveSetting(_themeModeKey, safe);
   }
 }

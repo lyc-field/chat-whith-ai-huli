@@ -7,6 +7,7 @@ import '../models/ai_persona.dart';
 import '../providers/chat_provider.dart';
 import '../providers/persona_provider.dart';
 import '../services/persona_io.dart';
+import '../services/auth_service.dart';
 import 'export_persona_dialog.dart';
 
 class PersonaSettingsPage extends StatefulWidget {
@@ -29,19 +30,24 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   late TextEditingController _appearanceCtrl;
   late TextEditingController _notesCtrl;
   late final TextEditingController _legacyPromptCtrl;
+  bool _showEroticSwitch = false;
 
   @override
   void initState() {
     super.initState();
     final chat = context.read<ChatProvider>();
     _userController = TextEditingController(text: chat.userPersona ?? '');
-    _worldBgController = TextEditingController(text: chat.worldBackground ?? '');
+    _worldBgController =
+        TextEditingController(text: chat.worldBackground ?? '');
     _openingLineCtrl = TextEditingController(text: chat.openingLine ?? '');
     _legacyPromptCtrl = TextEditingController(text: chat.systemPrompt ?? '');
     _affectionSlider = chat.affection.clamp(15, 50);
 
     final pp = context.read<PersonaProvider>();
     _initPersonaControllers(pp.currentPersona);
+    AuthService.hasAdminLoggedEver().then((v) {
+      if (mounted) setState(() => _showEroticSwitch = v);
+    });
   }
 
   void _initPersonaControllers(AIPersona? p) {
@@ -113,6 +119,13 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     // Allow affection adjustment as long as no user messages have been sent
     if (chat.messages.where((m) => m.role == 'user').isEmpty) {
       chat.setInitialAffection(_affectionSlider);
+      // In new-format chats, keep persona source in sync with AffectionManager
+      // to avoid save-time value jump (e.g. 50 -> stale persona value).
+      final cp = pp.currentPersona;
+      if (chat.isNewFormat && cp != null) {
+        cp.affection = _affectionSlider.toDouble();
+        await pp.saveImmediately(cp);
+      }
     }
     // OpeningLine must be set before userPersona/worldBackground because
     // it may create the conversation, which the latter two then persist to.
@@ -176,8 +189,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     _initPersonaControllers(pp.currentPersona);
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _nameCtrl.selection = TextSelection(
-          baseOffset: 0, extentOffset: _nameCtrl.text.length);
+      _nameCtrl.selection =
+          TextSelection(baseOffset: 0, extentOffset: _nameCtrl.text.length);
     });
   }
 
@@ -224,7 +237,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                   color: theme.colorScheme.tertiaryContainer,
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text('旧版', style: TextStyle(fontSize: 11, color: theme.colorScheme.tertiary)),
+                child: Text('旧版',
+                    style: TextStyle(
+                        fontSize: 11, color: theme.colorScheme.tertiary)),
               ),
             ]),
             const SizedBox(height: 8),
@@ -251,21 +266,26 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
             Text('AI 角色人设', style: theme.textTheme.titleSmall),
             const SizedBox(height: 12),
 
-            _buildField('角色名称', _nameCtrl, maxLines: 1,
-                hint: '例如：眠眠', onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('身份信息', _identityCtrl, maxLines: 2,
+            _buildField('角色名称', _nameCtrl,
+                maxLines: 1,
+                hint: '例如：眠眠',
+                onChanged: () => _onPersonaFieldChanged(pp)),
+            _buildField('身份信息', _identityCtrl,
+                maxLines: 2,
                 hint: '例如：生活在神社里的百年狐妖，神社的守护者...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('性格习惯', _personalityCtrl, maxLines: 3,
+            _buildField('性格习惯', _personalityCtrl,
+                maxLines: 3,
                 hint: '例如：温柔善良，偶尔傲娇，喜欢撒娇，说话时尾巴会摇来摇去...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('外观外貌', _appearanceCtrl, maxLines: 2,
+            _buildField('外观外貌', _appearanceCtrl,
+                maxLines: 2,
                 hint: '例如：橙色狐狸耳朵，毛茸茸的大尾巴，穿着白色和服，紫色眼睛...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-            _buildField('补充信息', _notesCtrl, maxLines: 3,
+            _buildField('补充信息', _notesCtrl,
+                maxLines: 3,
                 hint: '例如：喜欢晒太阳，讨厌下雨天，一直等待有缘人的到来...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
-
           ],
 
           const Divider(height: 32),
@@ -358,7 +378,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           ]),
           const SizedBox(height: 6),
           Text('建议使用长方形照片，竖屏效果最佳',
-              style: TextStyle(fontSize: 11, color: theme.colorScheme.outline.withOpacity(0.7))),
+              style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.outline.withOpacity(0.7))),
           const SizedBox(height: 24),
 
           // ── 初始好感度 ──
@@ -367,7 +389,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
               Text('初始好感度', style: theme.textTheme.titleSmall),
               const SizedBox(height: 4),
               Text('范围 15~50，保存后由系统根据对话内容自动调整',
-                  style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+                  style: TextStyle(
+                      fontSize: 12, color: theme.colorScheme.outline)),
               const SizedBox(height: 8),
               Row(children: [
                 Expanded(
@@ -390,6 +413,35 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
               Text('当前好感度：${chat.affection}（由系统自动管理）',
                   style: TextStyle(color: theme.colorScheme.outline)),
             ],
+          ],
+
+          if (_showEroticSwitch) ...[
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 8),
+            Text('对话模式', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text('开启后，该对话进入色情聊天模式。此设置仅作用于当前对话。',
+                style:
+                    TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+            const SizedBox(height: 8),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('色情聊天模式'),
+              subtitle: const Text('切换后下一条回复立即生效'),
+              value: chat.eroticMode,
+              onChanged: (v) async {
+                final messenger = ScaffoldMessenger.of(context);
+                await chat.setEroticMode(v);
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(v ? '已开启色情聊天模式' : '已关闭色情聊天模式'),
+                    duration: const Duration(seconds: 1),
+                  ),
+                );
+              },
+            ),
           ],
 
           const SizedBox(height: 16),
@@ -458,7 +510,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
             title: const Text('导入失败'),
             content: Text(parsed.error!),
             actions: [
-              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
             ],
           ),
         );
@@ -504,7 +557,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       if (parsed.userPersona != null && parsed.userPersona!.isNotEmpty) {
         _userController.text = parsed.userPersona!;
       }
-      if (parsed.worldBackground != null && parsed.worldBackground!.isNotEmpty) {
+      if (parsed.worldBackground != null &&
+          parsed.worldBackground!.isNotEmpty) {
         _worldBgController.text = parsed.worldBackground!;
       }
       if (parsed.openingLine != null && parsed.openingLine!.isNotEmpty) {
@@ -536,7 +590,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
             title: const Text('导入失败'),
             content: const Text('无法读取文件，请确认文件格式正确'),
             actions: [
-              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(ctx), child: const Text('确定')),
             ],
           ),
         );
@@ -549,7 +604,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.image,
       );
-      if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+      if (result == null ||
+          result.files.isEmpty ||
+          result.files.first.path == null) return;
       final chat = context.read<ChatProvider>();
       await chat.setChatBackground(result.files.first.path!);
       setState(() {});
@@ -586,7 +643,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
           onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, nameCtrl.text.trim()),
             child: const Text('确定'),
@@ -594,7 +652,8 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
         ],
       ),
     ).then((fileName) {
-      final finalName = (fileName != null && fileName.isNotEmpty) ? fileName : null;
+      final finalName =
+          (fileName != null && fileName.isNotEmpty) ? fileName : null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         nameCtrl.dispose();
         if (finalName == null || !mounted) return;

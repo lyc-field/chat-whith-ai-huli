@@ -32,20 +32,25 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 19,
+        version: 21,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
     } catch (e) {
-      debugPrint('Database init error: $e. Trying recovery without data loss...');
+      debugPrint(
+          'Database init error: $e. Trying recovery without data loss...');
       // Try opening with current version to see if it works at all
       try {
         return await openDatabase(path, version: 17);
       } catch (_) {}
       // Last resort: wipe and recreate
-      try { await deleteDatabase(path); } catch (_) {}
-      try { await File(path).delete(); } catch (_) {}
-      return await openDatabase(path, version: 19, onCreate: _onCreate);
+      try {
+        await deleteDatabase(path);
+      } catch (_) {}
+      try {
+        await File(path).delete();
+      } catch (_) {}
+      return await openDatabase(path, version: 21, onCreate: _onCreate);
     }
   }
 
@@ -63,6 +68,7 @@ class DatabaseService {
         opening_line TEXT,
         chat_background TEXT,
         affection INTEGER NOT NULL DEFAULT 30,
+        erotic_mode INTEGER NOT NULL DEFAULT 0,
         mode TEXT NOT NULL DEFAULT 'summary'
       )
     ''');
@@ -72,6 +78,7 @@ class DatabaseService {
         conversation_id TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
+        total_tokens INTEGER,
         timestamp TEXT NOT NULL,
         segment_index INTEGER,
         is_bookmarked INTEGER NOT NULL DEFAULT 0
@@ -317,8 +324,8 @@ class DatabaseService {
     }
     if (oldVersion < 12) {
       try {
-        await db.execute(
-            "ALTER TABLE conversations ADD COLUMN avatar_path TEXT");
+        await db
+            .execute("ALTER TABLE conversations ADD COLUMN avatar_path TEXT");
       } catch (_) {}
     }
     if (oldVersion < 13) {
@@ -362,8 +369,8 @@ class DatabaseService {
             "ALTER TABLE ai_personas ADD COLUMN affection REAL NOT NULL DEFAULT 30.0");
       } catch (_) {}
       try {
-        await db.execute(
-            "ALTER TABLE emotion_states ADD COLUMN persona_id TEXT");
+        await db
+            .execute("ALTER TABLE emotion_states ADD COLUMN persona_id TEXT");
       } catch (_) {}
       await db.execute('''
         CREATE TABLE IF NOT EXISTS persona_emotion_states (
@@ -385,12 +392,11 @@ class DatabaseService {
         )
       ''');
       try {
-        await db.execute(
-            "ALTER TABLE affection_logs ADD COLUMN persona_id TEXT");
+        await db
+            .execute("ALTER TABLE affection_logs ADD COLUMN persona_id TEXT");
       } catch (_) {}
       try {
-        await db.execute(
-            "ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
+        await db.execute("ALTER TABLE emotion_logs ADD COLUMN persona_id TEXT");
       } catch (_) {}
     }
     if (oldVersion < 17) {
@@ -410,7 +416,8 @@ class DatabaseService {
           )
         ''');
       } catch (e) {
-        debugPrint('KB FTS5 init failed (may not be supported on this device): $e');
+        debugPrint(
+            'KB FTS5 init failed (may not be supported on this device): $e');
       }
     }
     if (oldVersion < 18) {
@@ -424,14 +431,26 @@ class DatabaseService {
             "ALTER TABLE ai_personas ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
       } catch (_) {}
       try {
-        await db.execute(
-            "ALTER TABLE conversations ADD COLUMN opening_line TEXT");
+        await db
+            .execute("ALTER TABLE conversations ADD COLUMN opening_line TEXT");
       } catch (_) {}
     }
     if (oldVersion < 19) {
       try {
         await db.execute(
             "ALTER TABLE conversations ADD COLUMN chat_background TEXT");
+      } catch (_) {}
+    }
+    if (oldVersion < 20) {
+      try {
+        await db
+            .execute('ALTER TABLE messages ADD COLUMN total_tokens INTEGER');
+      } catch (_) {}
+    }
+    if (oldVersion < 21) {
+      try {
+        await db.execute(
+            'ALTER TABLE conversations ADD COLUMN erotic_mode INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
     }
   }
@@ -474,8 +493,14 @@ class DatabaseService {
         where: 'conversation_id = ?', whereArgs: [id]);
     await db.delete('emotion_states',
         where: 'conversation_id = ?', whereArgs: [id]);
+    await db.delete('persona_emotion_states',
+        where: 'conversation_id = ?', whereArgs: [id]);
     await db
         .delete('emotion_logs', where: 'conversation_id = ?', whereArgs: [id]);
+    await db
+        .delete('ai_personas', where: 'conversation_id = ?', whereArgs: [id]);
+    await db.delete('settings',
+        where: 'key LIKE ?', whereArgs: ['emotion_template_${id}_%']);
   }
 
   /// ─── Settings ────────
@@ -604,8 +629,8 @@ class DatabaseService {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  static Future<List<AffectionLog>> getAffectionLogs(
-      String conversationId, {String? personaId}) async {
+  static Future<List<AffectionLog>> getAffectionLogs(String conversationId,
+      {String? personaId}) async {
     final db = await database;
     List<Map<String, dynamic>> rows;
     if (personaId != null) {
@@ -660,7 +685,8 @@ class DatabaseService {
 
   /// ─── Persona Emotion State CRUD ────────
 
-  static Future<EmotionState?> getPersonaEmotionState(String conversationId, String personaId) async {
+  static Future<EmotionState?> getPersonaEmotionState(
+      String conversationId, String personaId) async {
     final db = await database;
     final rows = await db.query(
       'persona_emotion_states',
@@ -683,14 +709,16 @@ class DatabaseService {
         where: 'id = ?', whereArgs: [state.id]);
   }
 
-  static Future<void> deletePersonaEmotionState(String conversationId, String personaId) async {
+  static Future<void> deletePersonaEmotionState(
+      String conversationId, String personaId) async {
     final db = await database;
     await db.delete('persona_emotion_states',
         where: 'conversation_id = ? AND persona_id = ?',
         whereArgs: [conversationId, personaId]);
   }
 
-  static Future<void> deleteEmotionState(String conversationId, {String? personaId}) async {
+  static Future<void> deleteEmotionState(String conversationId,
+      {String? personaId}) async {
     final db = await database;
     if (personaId != null) {
       await db.delete('emotion_states',
@@ -717,7 +745,8 @@ class DatabaseService {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  static Future<List<EmotionLog>> getEmotionLogs(String conversationId, {String? personaId}) async {
+  static Future<List<EmotionLog>> getEmotionLogs(String conversationId,
+      {String? personaId}) async {
     final db = await database;
     List<Map<String, dynamic>> rows;
     if (personaId != null) {
@@ -768,7 +797,8 @@ class DatabaseService {
     await db.delete('ai_personas', where: 'id = ?', whereArgs: [id]);
   }
 
-  static Future<void> deleteAIPersonasByConversation(String conversationId) async {
+  static Future<void> deleteAIPersonasByConversation(
+      String conversationId) async {
     final db = await database;
     await db.delete('ai_personas',
         where: 'conversation_id = ?', whereArgs: [conversationId]);
@@ -783,11 +813,12 @@ class DatabaseService {
     } catch (_) {}
   }
 
-  static Future<List<Map<String, dynamic>>> searchKb(String query, {int limit = 5}) async {
+  static Future<List<Map<String, dynamic>>> searchKb(String query,
+      {int limit = 5}) async {
     try {
       final db = await database;
       final safe = query
-          .replaceAll(RegExp(r'["''*()]'), '')
+          .replaceAll(RegExp(r'["' '*()]'), '')
           .replaceAll(RegExp(r'\s+'), ' ');
       if (safe.trim().isEmpty) return [];
       final rows = await db.rawQuery(
@@ -826,10 +857,13 @@ class DatabaseService {
 
   static Future<void> markFileImported(String filePath, String fileName) async {
     final db = await database;
-    await db.insert('kb_import_log', {
-      'file_path': filePath,
-      'file_name': fileName,
-      'imported_at': DateTime.now().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+        'kb_import_log',
+        {
+          'file_path': filePath,
+          'file_name': fileName,
+          'imported_at': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 }

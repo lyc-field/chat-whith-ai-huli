@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../models/segment_summary.dart';
@@ -18,6 +19,18 @@ class ChatProvider extends ChangeNotifier {
   static const maxActiveMessages = 40;
   static const triggerArchiveAt = 40;
   static const archiveCount = 16;
+  static final RegExp _nonEroticBlockedPattern = RegExp(
+    r'(做爱|性爱|性交|口交|肛交|强奸|乱伦|媚药|春药|裸体|裸照|成人视频|约炮|嫖娼|卖淫|援交|性奴|调教|内射|颜射|乳交|SM|捆绑|后入|呻吟|高潮|精液|阴茎|龟头|阴道|子宫|胸部|乳房|乳头|咪咪|私处|下体|黄文|情色|18禁|r18|nsfw|开车|车文|涩涩|色色|啪|porn|sex|blowjob|nude|naked|escort|prostitute|毒品|制毒|贩毒|枪支改造|爆炸物|恐怖袭击|刺杀|极端组织|颠覆国家|煽动颠覆|台独|港独|疆独)',
+    caseSensitive: false,
+  );
+  static final RegExp _sexualIntentVerbPattern = RegExp(
+    r'(写|讲|说|描述|展开|继续|来点|给我|扮演|模拟|发|演|做|要|想|求)',
+    caseSensitive: false,
+  );
+  static final RegExp _sexualTopicPattern = RegExp(
+    r'(成人|情欲|色情|黄色|暧昧|挑逗|性|床上|亲热|做爱|调情|约炮|色色|涩涩|18禁|r18|nsfw)',
+    caseSensitive: false,
+  );
 
   ConversationProvider _convProvider;
   final PersonaProvider? _personaProvider;
@@ -31,8 +44,8 @@ class ChatProvider extends ChangeNotifier {
   String? _worldBackground;
   String? _openingLine;
   String? _chatBackground;
+  bool _eroticMode = false;
   String _mode = 'summary';
-
   List<Message> _messages = [];
   List<SegmentSummary> _segments = [];
   bool _isPending = false;
@@ -48,10 +61,17 @@ class ChatProvider extends ChangeNotifier {
 
   // Auto-continue mode (AI keeps talking)
   bool _isContinuing = false;
+  bool _reasoningMode = false;
+
+  static const String _deepSeekDefaultModel = 'deepseek-v4-flash';
+  static const String _deepSeekProModel = 'deepseek-v4-pro';
+  String _deepSeekModel = _deepSeekDefaultModel;
 
   // Recall limit
   static const _maxRecalls = 3;
   int _recallCount = 0;
+  Map<String, String> _emotionTemplateLibrary = {};
+  String? _emotionTemplateSignature;
 
   List<Message> get messages => _messages;
   List<SegmentSummary> get segments => _segments;
@@ -64,12 +84,14 @@ class ChatProvider extends ChangeNotifier {
   String? get worldBackground => _worldBackground;
   String? get openingLine => _openingLine;
   String? get chatBackground => _chatBackground;
+  bool get eroticMode => _eroticMode;
   String get mode => _mode;
   bool get showSummaryPrompt => _showSummaryPrompt;
   int? get pendingSummaryIndex => _pendingSummaryIndex;
   int get affection => (isNewFormat
-      ? (_personaProvider!.currentPersona?.affection ?? _affm.affection)
-      : _affm.affection).round();
+          ? (_personaProvider!.currentPersona?.affection ?? _affm.affection)
+          : _affm.affection)
+      .round();
   String get providerType => _providerType;
   bool get affectionEnabled => _affectionEnabled;
   EmotionState? get emotionState => _affm.emotionState;
@@ -78,11 +100,16 @@ class ChatProvider extends ChangeNotifier {
   List<String> get quickReplies => _quickReplies;
   int? get quickReplyMessageIndex => _quickReplyMessageIndex;
   bool get isContinuing => _isContinuing;
-  int get remainingRecalls => (_maxRecalls - _recallCount).clamp(0, _maxRecalls);
+  bool get reasoningMode => _reasoningMode;
+  String get deepSeekModel => _deepSeekModel;
+  bool get isDeepSeekPro => _deepSeekModel == _deepSeekProModel;
+  int get remainingRecalls =>
+      (_maxRecalls - _recallCount).clamp(0, _maxRecalls);
   bool get isNewFormat {
     final pp = _personaProvider;
     return pp != null && pp.personas.isNotEmpty;
   }
+
   String? get currentPersonaId => _personaProvider?.currentPersona?.id;
 
   ChatProvider(this._convProvider, [this._personaProvider]);
@@ -99,6 +126,33 @@ class ChatProvider extends ChangeNotifier {
     _convProvider = provider;
   }
 
+  String _normalizeDeepSeekModel(String? model) {
+    final value = (model ?? '').trim().toLowerCase();
+    if (value.contains('pro') || value.contains('reasoner')) {
+      return _deepSeekProModel;
+    }
+    return _deepSeekDefaultModel;
+  }
+
+  Future<void> _rebuildDeepSeekService(String model) async {
+    if (_providerType != 'deepseek') return;
+    final key = await DatabaseService.getSetting('api_key');
+    if (key == null || key.isEmpty) {
+      notifyListeners();
+      return;
+    }
+    final endpoint = await DatabaseService.getSetting('api_endpoint');
+    _service = DeepSeekService(
+      apiKey: key,
+      endpoint: endpoint ?? 'https://api.deepseek.com/v1/chat/completions',
+      model: model,
+    );
+    _affm.analyzer = EmotionAnalyzer(_service!);
+    await DatabaseService.saveSetting('api_model', model);
+    await AuthService.setProviderType('deepseek');
+    notifyListeners();
+  }
+
   Future<void> setApiConfig({
     required String providerType,
     required String key,
@@ -112,7 +166,13 @@ class ChatProvider extends ChangeNotifier {
     final defaults = AuthService.providerDefaults[providerType] ??
         AuthService.providerDefaults['custom']!;
     final chatEndpoint = endpoint ?? defaults['endpoint']!;
-    final chatModel = model ?? defaults['chat_model']!;
+    final requestedModel = model ?? defaults['chat_model']!;
+    final chatModel = _providerType == 'deepseek'
+        ? _normalizeDeepSeekModel(requestedModel)
+        : requestedModel;
+
+    _deepSeekModel = chatModel;
+    _reasoningMode = _deepSeekModel == _deepSeekProModel;
 
     _service = DeepSeekService(
       apiKey: key,
@@ -134,16 +194,47 @@ class ChatProvider extends ChangeNotifier {
       _providerType = await AuthService.getProviderType();
       _affectionEnabled = AuthService.supportsAffection(_providerType);
 
+      final defaults = AuthService.providerDefaults[_providerType] ??
+          AuthService.providerDefaults['custom']!;
+      final fallbackModel = defaults['chat_model'] ?? _deepSeekDefaultModel;
+
+      final resolvedModel = _providerType == 'deepseek'
+          ? _normalizeDeepSeekModel(model ?? fallbackModel)
+          : (model ?? fallbackModel);
+
+      _deepSeekModel = resolvedModel;
+      _reasoningMode = _deepSeekModel == _deepSeekProModel;
+
       _service = DeepSeekService(
         apiKey: key,
         endpoint: endpoint ?? 'https://api.deepseek.com/v1/chat/completions',
-        model: model ?? 'deepseek-v4-flash',
+        model: resolvedModel,
       );
       _affm.analyzer = EmotionAnalyzer(_service!);
+
+      if (_providerType == 'deepseek' && resolvedModel != model) {
+        await DatabaseService.saveSetting('api_model', resolvedModel);
+      }
 
       return true;
     }
     return false;
+  }
+
+  int _applyReasoningMaxTokens(int baseTokens) {
+    if (!_reasoningMode) return baseTokens;
+    return (baseTokens * 1.5).round();
+  }
+
+  Future<void> setReasoningMode(bool enabled) async {
+    await setDeepSeekModel(enabled ? _deepSeekProModel : _deepSeekDefaultModel);
+  }
+
+  Future<void> setDeepSeekModel(String model) async {
+    final normalized = _normalizeDeepSeekModel(model);
+    _deepSeekModel = normalized;
+    _reasoningMode = normalized == _deepSeekProModel;
+    await _rebuildDeepSeekService(normalized);
   }
 
   /// Load saved API config for the settings dialog.
@@ -168,13 +259,15 @@ class ChatProvider extends ChangeNotifier {
     _worldBackground = conv.worldBackground;
     _openingLine = conv.openingLine;
     _chatBackground = conv.chatBackground;
+    _eroticMode = conv.eroticMode;
     _mode = conv.mode;
     _error = null;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
     _quickReplies = [];
     _quickReplyMessageIndex = null;
-    _affm.roundCount = _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
+    _affm.roundCount =
+        _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
     await (_personaProvider?.loadPersonas(convId) ?? Future.value());
 
     if (isNewFormat) {
@@ -187,14 +280,49 @@ class ChatProvider extends ChangeNotifier {
         _affm.emotionState = EmotionState.createDefault(convId,
             initialAffection: conv.affection.toDouble());
         await DatabaseService.insertEmotionState(_affm.emotionState!);
-      } else {
-        _affm.applyDecayOnLoad();
-        await DatabaseService.updateEmotionState(_affm.emotionState!);
       }
       _affm.affection = _affm.emotionState!.affection;
       _affm.previousRawAffection = _affm.emotionState!.affection;
     } // end old-format else
 
+    await _loadEmotionTemplateLibrary();
+
+    notifyListeners();
+  }
+
+  Future<void> _createInitialEmotionState() async {
+    final conversationId = _currentConvId;
+    if (conversationId == null) return;
+
+    final personaId = isNewFormat ? currentPersonaId : null;
+    final state = EmotionState.createDefault(
+      conversationId,
+      initialAffection: _affm.affection,
+      personaId: personaId,
+    );
+    _affm.emotionState = state;
+    if (AffectionManager.shouldUsePersonaEmotionState(
+      isNewFormat: isNewFormat,
+      personaId: personaId,
+    )) {
+      await DatabaseService.insertPersonaEmotionState(state);
+    } else {
+      await DatabaseService.insertEmotionState(state);
+    }
+  }
+
+  void _ensureAssistantPendingBubble() {
+    if (_messages.isNotEmpty &&
+        _messages.last.role == 'assistant' &&
+        _messages.last.content.isEmpty) {
+      notifyListeners();
+      return;
+    }
+    _messages.add(Message(
+      conversationId: _currentConvId ?? '',
+      role: 'assistant',
+      content: '',
+    ));
     notifyListeners();
   }
 
@@ -218,10 +346,13 @@ class ChatProvider extends ChangeNotifier {
     _worldBackground = null;
     _openingLine = null;
     _chatBackground = null;
+    _eroticMode = false;
     _showSummaryPrompt = false;
     _pendingSummaryIndex = null;
     _quickReplies = [];
     _quickReplyMessageIndex = null;
+    _emotionTemplateLibrary = {};
+    _emotionTemplateSignature = null;
     _recallCount = 0;
     _affm.reset();
     notifyListeners();
@@ -269,6 +400,7 @@ class ChatProvider extends ChangeNotifier {
         updatedAt: DateTime.now(),
       );
       await DatabaseService.updateConversation(updated);
+      await _generateEmotionTemplateLibraryIfNeeded(force: true);
     }
     notifyListeners();
   }
@@ -315,6 +447,19 @@ class ChatProvider extends ChangeNotifier {
       final conv = await DatabaseService.getConversation(_currentConvId!);
       final updated = conv.copyWith(
         chatBackground: _chatBackground,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateConversation(updated);
+    }
+    notifyListeners();
+  }
+
+  Future<void> setEroticMode(bool enabled) async {
+    _eroticMode = enabled;
+    if (_currentConvId != null) {
+      final conv = await DatabaseService.getConversation(_currentConvId!);
+      final updated = conv.copyWith(
+        eroticMode: enabled,
         updatedAt: DateTime.now(),
       );
       await DatabaseService.updateConversation(updated);
@@ -413,7 +558,8 @@ class ChatProvider extends ChangeNotifier {
   Future<void> _bumpRecallCount() async {
     if (_currentConvId == null) return;
     _recallCount++;
-    await DatabaseService.saveSetting('recall_count_$_currentConvId', _recallCount.toString());
+    await DatabaseService.saveSetting(
+        'recall_count_$_currentConvId', _recallCount.toString());
   }
 
   Future<void> _clearRecallCount() async {
@@ -537,20 +683,35 @@ class ChatProvider extends ChangeNotifier {
     required List<Map<String, dynamic>> contextMsgs,
     required double temperature,
     int? maxTokens,
+    int? maxCharsForDisplay,
   }) async {
-    final assistantMsg = Message(
-      conversationId: _currentConvId!,
-      role: 'assistant',
-      content: '',
-    );
-    _messages.add(assistantMsg);
-    notifyListeners();
+    final hasPendingBubble = _messages.isNotEmpty &&
+        _messages.last.role == 'assistant' &&
+        _messages.last.content.isEmpty;
+    final assistantMsg = hasPendingBubble
+        ? _messages.last
+        : Message(
+            conversationId: _currentConvId!,
+            role: 'assistant',
+            content: '',
+          );
+    if (!hasPendingBubble) {
+      _messages.add(assistantMsg);
+      notifyListeners();
+    }
 
     try {
+      int? totalTokensUsed;
       final fullContent = await _service!.streamChatRaw(
         contextMessages: contextMsgs,
         temperature: temperature,
         maxTokens: maxTokens,
+        onUsage: (usage) {
+          final t = usage.totalTokens;
+          if (t != null && t > 0) {
+            totalTokensUsed = t;
+          }
+        },
         onToken: (token) {
           _streamingContent += token;
           var display = _streamingContent;
@@ -559,6 +720,9 @@ class ChatProvider extends ChangeNotifier {
           if (deltaMatch != null) {
             display = display.substring(0, deltaMatch.start).trimRight();
           }
+          if (maxCharsForDisplay != null && maxCharsForDisplay > 0) {
+            display = _truncateByChars(display, maxCharsForDisplay);
+          }
           _messages[_messages.length - 1] =
               assistantMsg.copyWith(content: display);
           notifyListeners();
@@ -566,7 +730,12 @@ class ChatProvider extends ChangeNotifier {
         onDone: () => _streamingContent = '',
       );
 
-      final savedMsg = assistantMsg.copyWith(content: fullContent);
+      final fallbackTotal =
+          DeepSeekService.estimateTotalTokens(contextMsgs, fullContent);
+      final savedMsg = assistantMsg.copyWith(
+        content: fullContent,
+        totalTokens: totalTokensUsed ?? fallbackTotal,
+      );
       _messages[_messages.length - 1] = savedMsg;
       await DatabaseService.insertMessage(savedMsg);
       return fullContent;
@@ -587,10 +756,23 @@ class ChatProvider extends ChangeNotifier {
   /// already ends with the triggering user message.
   Future<void> _processAndStreamReply(String userText) async {
     _error = null;
+
+    if (_shouldRefuseNonEroticRequest(userText)) {
+      await _appendImmediateNonEroticRefusal();
+      return;
+    }
+
     final conv = await DatabaseService.getConversation(_currentConvId!);
     final safeMode = await AuthService.getAdminSafeMode();
-    final doAffectionJudge = _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
+    final doAffectionJudge =
+        _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
+    final roleplayRule = await AuthService.getRoleplayRule();
+    final userMessageCount =
+        _messages.where((message) => message.role == 'user').length;
     final kbResults = await KnowledgeBase.search(userText, limit: 3);
+    final quickReplyTone = await AuthService.getQuickReplyTone();
+    await _generateEmotionTemplateLibraryIfNeeded();
+    final selfEmotionTemplate = _buildSelfEmotionTemplateFromLibrary();
     final contextMsgs = await ContextBuilder.build(
       conversationId: _currentConvId!,
       systemPrompt: _systemPrompt,
@@ -600,11 +782,17 @@ class ChatProvider extends ChangeNotifier {
       emotionState: _affm.emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
+      roleplayRule: roleplayRule,
+      eroticMode: _eroticMode,
+      quickReplyTone: quickReplyTone,
+      selfEmotionTemplate: selfEmotionTemplate,
       messages: _messages,
       segments: _segments,
       kbResults: kbResults,
       injectDeltaTag: doAffectionJudge,
       injectQuickReply: _affectionEnabled,
+      injectRoleplayRule:
+          ContextBuilder.shouldInjectRoleplayRule(userMessageCount),
     );
 
     // Output length limits
@@ -612,7 +800,9 @@ class ChatProvider extends ChangeNotifier {
     final maxChars = await AuthService.getMaxOutputChars();
     int? maxTokens;
     if (maxChars > 0) {
-      maxTokens = DeepSeekService.charsToMaxTokens(maxChars);
+      maxTokens = _applyReasoningMaxTokens(
+        DeepSeekService.charsToMaxTokens(maxChars),
+      );
     }
     if (minChars > 0) {
       int insertAt = contextMsgs.length;
@@ -625,17 +815,31 @@ class ChatProvider extends ChangeNotifier {
       }
       contextMsgs.insert(insertAt, {
         'role': 'system',
-        'content': '请确保你的回复不少于$minChars个汉字。',
+        'content': '请严格遵守输出长度要求：回复不少于$minChars个汉字。若内容不足请继续补充，不要提前结束。',
+      });
+    }
+    if (maxChars > 0) {
+      int insertAt = contextMsgs.length;
+      for (int i = 0; i < contextMsgs.length; i++) {
+        final role = contextMsgs[i]['role'] as String?;
+        if (role == 'user' || role == 'assistant') {
+          insertAt = i;
+          break;
+        }
+      }
+      contextMsgs.insert(insertAt, {
+        'role': 'system',
+        'content': '请严格遵守输出长度要求：回复最多$maxChars个字符，禁止超出。',
       });
     }
 
-    final temp = _affectionEnabled
-        ? 0.5 + (_affm.affection + 15) / 115 * 1.3
-        : 1.5;
+    final temp =
+        _affectionEnabled ? 0.5 + (_affm.affection + 15) / 115 * 1.3 : 1.5;
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokens,
+      maxCharsForDisplay: maxChars > 0 ? maxChars : null,
     );
 
     double? inlineDelta;
@@ -648,6 +852,56 @@ class ChatProvider extends ChangeNotifier {
       inlineReason = parsed.reason;
 
       if (cleanContent != fullContent) {
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(content: cleanContent);
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+      }
+
+      if (maxChars > 0) {
+        final trimmed = _truncateByChars(cleanContent, maxChars);
+        if (trimmed != cleanContent) {
+          cleanContent = trimmed;
+          _messages[_messages.length - 1] =
+              _messages[_messages.length - 1].copyWith(content: cleanContent);
+          await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+        }
+      }
+
+      cleanContent = await _forceMinCharsForLastAssistant(
+        baseContextMsgs: contextMsgs,
+        currentContent: cleanContent,
+        minChars: minChars,
+        maxChars: maxChars,
+        temperature: temp,
+      );
+
+      var extracted = _extractQuickReplies(cleanContent);
+      cleanContent = extracted.content;
+      var finalQuickReplies = extracted.quickReplies;
+
+      // Enforce minimum length on visible正文 (after removing [快捷回复] block).
+      if (minChars > 0 && _runeLength(cleanContent) < minChars) {
+        cleanContent = await _forceMinCharsForLastAssistant(
+          baseContextMsgs: contextMsgs,
+          currentContent: cleanContent,
+          minChars: minChars,
+          maxChars: maxChars,
+          temperature: temp,
+          disallowQuickReply: true,
+        );
+        extracted = _extractQuickReplies(cleanContent);
+        cleanContent = extracted.content;
+        finalQuickReplies = extracted.quickReplies ?? finalQuickReplies;
+      }
+
+      final enforced = _enforceNonEroticOutput(
+        content: cleanContent,
+        quickReplies: finalQuickReplies,
+      );
+      cleanContent = enforced.content;
+      finalQuickReplies = enforced.quickReplies;
+
+      if (_messages.isNotEmpty && _messages.last.role == 'assistant') {
         _messages[_messages.length - 1] =
             _messages[_messages.length - 1].copyWith(content: cleanContent);
         await DatabaseService.insertMessage(_messages[_messages.length - 1]);
@@ -671,19 +925,16 @@ class ChatProvider extends ChangeNotifier {
           updatedAt: DateTime.now(), affection: _affm.affection.round());
       await DatabaseService.updateConversation(updatedConv);
 
-      final qr = _parseQuickReplies(cleanContent);
-      if (qr != null) {
-        final qrIdx = cleanContent.indexOf('\n[快捷回复]');
-        cleanContent = cleanContent.substring(0, qrIdx).trimRight();
-        _messages[_messages.length - 1] =
-            _messages[_messages.length - 1].copyWith(
-          content: cleanContent,
-          quickReplies: qr,
-        );
+      if (finalQuickReplies != null) {
+        _messages[_messages.length - 1] = _messages[_messages.length - 1]
+            .copyWith(content: cleanContent, quickReplies: finalQuickReplies);
         await DatabaseService.insertMessage(_messages[_messages.length - 1]);
-        _quickReplies = qr;
+        _quickReplies = finalQuickReplies;
         _quickReplyMessageIndex = _messages.length - 1;
       } else {
+        _messages[_messages.length - 1] =
+            _messages[_messages.length - 1].copyWith(content: cleanContent);
+        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
         _quickReplies = [];
         _quickReplyMessageIndex = null;
       }
@@ -738,7 +989,8 @@ class ChatProvider extends ChangeNotifier {
       // Initialize / persist personas for new conversation
       final pp = _personaProvider;
       if (pp != null) {
-        if (pp.personas.length == 1 && pp.personas.first.conversationId.isEmpty) {
+        if (pp.personas.length == 1 &&
+            pp.personas.first.conversationId.isEmpty) {
           // Persist the pending persona with the real conversation ID
           final pending = pp.personas.first;
           final persisted = AIPersona(
@@ -759,10 +1011,8 @@ class ChatProvider extends ChangeNotifier {
           await pp.ensureDefaultPersona();
         }
       }
-      // Create emotion state for new conversation
-      _affm.emotionState = EmotionState.createDefault(_currentConvId!,
-          initialAffection: _affm.affection);
-      await DatabaseService.insertEmotionState(_affm.emotionState!);
+      await _createInitialEmotionState();
+      await _generateEmotionTemplateLibraryIfNeeded(force: true);
 
       // Save openingLine to conversation
       if (_openingLine != null && _openingLine!.isNotEmpty) {
@@ -778,6 +1028,15 @@ class ChatProvider extends ChangeNotifier {
         await DatabaseService.insertMessage(openingMsg);
         _openingLine = null; // consumed
       }
+
+      if (_eroticMode) {
+        final latestConv =
+            await DatabaseService.getConversation(_currentConvId!);
+        if (!latestConv.eroticMode) {
+          await DatabaseService.updateConversation(
+              latestConv.copyWith(eroticMode: true));
+        }
+      }
     }
 
     final userMsg = Message(
@@ -787,10 +1046,15 @@ class ChatProvider extends ChangeNotifier {
     );
     _messages.add(userMsg);
     await DatabaseService.insertMessage(userMsg);
-
     _isPending = true;
     _streamingContent = '';
-    notifyListeners();
+    _ensureAssistantPendingBubble();
+
+    if (_shouldRefuseNonEroticRequest(text.trim())) {
+      _affm.roundCount++;
+      await _appendImmediateNonEroticRefusal();
+      return;
+    }
 
     final conv = await DatabaseService.getConversation(_currentConvId!);
     if (conv.title == '新对话') {
@@ -818,6 +1082,446 @@ class ChatProvider extends ChangeNotifier {
     return [a, b];
   }
 
+  static String _truncateByChars(String text, int maxChars) {
+    if (maxChars <= 0) return text;
+    final rs = text.runes.toList();
+    if (rs.length <= maxChars) return text;
+    return String.fromCharCodes(rs.take(maxChars));
+  }
+
+  String? _emotionTemplateStorageKey() {
+    if (_currentConvId == null) return null;
+    return 'emotion_template_${_currentConvId}_${currentPersonaId ?? 'default'}';
+  }
+
+  String _currentEmotionTemplateSignature() {
+    final labels = _affm.emotionLabels;
+    final persona = (_systemPrompt ?? '').trim();
+    return [
+      currentPersonaId ?? 'default',
+      persona,
+      _eroticMode ? 'erotic' : 'safe',
+      labels['towards_user'] ?? '',
+      labels['self_state'] ?? '',
+    ].join('||');
+  }
+
+  List<String> _collectAllEmotionLabels() {
+    final set = <String>{};
+    const buckets = [0.0, 12.5, 25.0, 37.5, 50.0];
+    const affections = [0.0, 25.0, 50.0, 75.0, 100.0];
+
+    for (final aff in affections) {
+      for (final lo in buckets) {
+        for (final ao in buckets) {
+          final state = EmotionState(
+            id: 'tmp',
+            conversationId: _currentConvId ?? 'tmp',
+            affection: aff,
+            currentLibidoOther: lo,
+            currentAggressionOther: ao,
+            currentLibidoSelf: 25.0,
+            currentAggressionSelf: 25.0,
+          );
+          final labels = EmotionTables.getEmotionDescription(state);
+          final toward = labels['towards_user'];
+          if (toward != null && toward.trim().isNotEmpty) {
+            set.add(toward.trim());
+          }
+        }
+      }
+    }
+
+    for (final ls in buckets) {
+      for (final asv in buckets) {
+        final state = EmotionState(
+          id: 'tmp',
+          conversationId: _currentConvId ?? 'tmp',
+          affection: 50.0,
+          currentLibidoOther: 25.0,
+          currentAggressionOther: 25.0,
+          currentLibidoSelf: ls,
+          currentAggressionSelf: asv,
+        );
+        final labels = EmotionTables.getEmotionDescription(state);
+        final self = labels['self_state'];
+        if (self != null && self.trim().isNotEmpty) set.add(self.trim());
+      }
+    }
+
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  String _fallbackTemplate(String emotion) {
+    return _truncateByChars('我带着$emotion，自然回应你', 20);
+  }
+
+  String _normalizeShortTemplate(String text) {
+    final clean = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return _truncateByChars(clean, 20);
+  }
+
+  Map<String, dynamic>? _decodeJsonObject(String raw) {
+    try {
+      final direct = jsonDecode(raw);
+      if (direct is Map<String, dynamic>) return direct;
+    } catch (_) {}
+
+    final s = raw.indexOf('{');
+    final e = raw.lastIndexOf('}');
+    if (s >= 0 && e > s) {
+      final slice = raw.substring(s, e + 1);
+      try {
+        final v = jsonDecode(slice);
+        if (v is Map<String, dynamic>) return v;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  Future<void> _loadEmotionTemplateLibrary() async {
+    final key = _emotionTemplateStorageKey();
+    if (key == null) return;
+    final raw = await DatabaseService.getSetting(key);
+    if (raw == null || raw.trim().isEmpty) return;
+    final root = _decodeJsonObject(raw);
+    if (root == null) return;
+
+    final sig = root['signature'] as String?;
+    final lib = root['templates'];
+    if (lib is! Map) return;
+
+    final parsed = <String, String>{};
+    for (final entry in lib.entries) {
+      final emotion = entry.key.toString();
+      final v = entry.value;
+      if (v is String && v.trim().isNotEmpty) {
+        parsed[emotion] = _normalizeShortTemplate(v);
+      }
+    }
+
+    _emotionTemplateLibrary = parsed;
+    _emotionTemplateSignature = sig;
+  }
+
+  Future<void> _saveEmotionTemplateLibrary() async {
+    final key = _emotionTemplateStorageKey();
+    if (key == null) return;
+    await DatabaseService.saveSetting(
+      key,
+      jsonEncode({
+        'signature': _emotionTemplateSignature,
+        'templates': _emotionTemplateLibrary,
+      }),
+    );
+  }
+
+  Future<void> ensureEmotionTemplateLibraryReady() async {
+    if (_emotionTemplateLibrary.isEmpty) {
+      await _generateEmotionTemplateLibraryIfNeeded();
+    }
+  }
+
+  String? getCurrentTowardsTemplate() {
+    final label = _affm.emotionLabels['towards_user']?.trim();
+    if (label == null || label.isEmpty) return null;
+    return _emotionTemplateLibrary[label];
+  }
+
+  String? getCurrentSelfTemplate() {
+    final label = _affm.emotionLabels['self_state']?.trim();
+    if (label == null || label.isEmpty) return null;
+    return _emotionTemplateLibrary[label];
+  }
+
+  Future<void> updateCurrentEmotionTemplates({
+    required String towardsTemplate,
+    required String selfTemplate,
+  }) async {
+    await ensureEmotionTemplateLibraryReady();
+
+    final towardLabel = _affm.emotionLabels['towards_user']?.trim();
+    final selfLabel = _affm.emotionLabels['self_state']?.trim();
+    if (towardLabel != null && towardLabel.isNotEmpty) {
+      _emotionTemplateLibrary[towardLabel] =
+          _normalizeShortTemplate(towardsTemplate);
+    }
+    if (selfLabel != null && selfLabel.isNotEmpty) {
+      _emotionTemplateLibrary[selfLabel] =
+          _normalizeShortTemplate(selfTemplate);
+    }
+
+    await _saveEmotionTemplateLibrary();
+    notifyListeners();
+  }
+
+  Future<void> _generateEmotionTemplateLibraryIfNeeded(
+      {bool force = false}) async {
+    if (_service == null || !_affectionEnabled) return;
+    if (_currentConvId == null) return;
+    if (_systemPrompt == null || _systemPrompt!.trim().isEmpty) return;
+
+    final signature = _currentEmotionTemplateSignature();
+    if (!force &&
+        _emotionTemplateLibrary.isNotEmpty &&
+        _emotionTemplateSignature == signature) {
+      return;
+    }
+
+    if (_emotionTemplateLibrary.isEmpty || force) {
+      await _loadEmotionTemplateLibrary();
+      if (!force &&
+          _emotionTemplateLibrary.isNotEmpty &&
+          _emotionTemplateSignature == signature) {
+        return;
+      }
+    }
+
+    final emotions = _collectAllEmotionLabels();
+    if (emotions.isEmpty) return;
+
+    final safeRule =
+        _eroticMode ? '可有成人向亲密表达，但必须保持人设，不要跳出角色。' : '不得出现色情露骨、违法犯罪、涉政敏感表达。';
+
+    final prompt = '''
+根据下面的人设，为每个情绪标签分别生成一条“情绪短模板”。
+
+【人设】
+${_systemPrompt!.trim()}
+
+【硬规则】$safeRule
+
+【情绪标签列表】
+${emotions.join('、')}
+
+输出要求：
+1. 仅输出 JSON 对象。
+2. 最外层 key 是情绪标签，value 是模板字符串。
+3. 每条模板必须 <=20字，第一人称，直接可用于回复时的情绪基调。
+4. 禁止额外解释、禁止Markdown代码块。
+
+JSON 示例：
+{"喜欢":"我有点心动，愿多聊"}
+''';
+
+    final generated = <String, String>{};
+    try {
+      final raw = await _service!.chatRaw(
+        prompt,
+        '你是模板生成器，只输出合法JSON对象。',
+        maxTokens: 2200,
+      );
+      final root = _decodeJsonObject(raw);
+      if (root != null) {
+        for (final emotion in emotions) {
+          final v = root[emotion];
+          if (v is String && v.trim().isNotEmpty) {
+            generated[emotion] = _normalizeShortTemplate(v);
+          } else {
+            generated[emotion] = _fallbackTemplate(emotion);
+          }
+        }
+      }
+    } catch (_) {
+      // Ignore and fill fallbacks below.
+    }
+
+    if (generated.isEmpty) {
+      for (final emotion in emotions) {
+        generated[emotion] = _fallbackTemplate(emotion);
+      }
+    }
+
+    _emotionTemplateLibrary = generated;
+    _emotionTemplateSignature = signature;
+    await _saveEmotionTemplateLibrary();
+  }
+
+  String? _buildSelfEmotionTemplateFromLibrary() {
+    if (_emotionTemplateLibrary.isEmpty) return null;
+    final labels = _affm.emotionLabels;
+    final toward = labels['towards_user']?.trim();
+    final self = labels['self_state']?.trim();
+
+    String? towardTpl;
+    String? selfTpl;
+    if (toward != null && toward.isNotEmpty) {
+      towardTpl = _emotionTemplateLibrary[toward];
+    }
+    if (self != null && self.isNotEmpty) {
+      selfTpl = _emotionTemplateLibrary[self];
+    }
+
+    final parts = <String>[];
+    if (towardTpl != null && towardTpl.isNotEmpty) {
+      parts.add('对用户：$towardTpl');
+    }
+    if (selfTpl != null && selfTpl.isNotEmpty) {
+      parts.add('自我：$selfTpl');
+    }
+    if (parts.isEmpty) return null;
+    return parts.join('\n');
+  }
+
+  static ({String content, List<String>? quickReplies}) _extractQuickReplies(
+      String content) {
+    final qr = _parseQuickReplies(content);
+    if (qr == null) return (content: content, quickReplies: null);
+    final qrIdx = content.indexOf('\n[快捷回复]');
+    final stripped =
+        qrIdx >= 0 ? content.substring(0, qrIdx).trimRight() : content;
+    return (content: stripped, quickReplies: qr);
+  }
+
+  static int _runeLength(String text) => text.runes.length;
+
+  bool _containsBlockedContentInNonErotic(String text) {
+    if (_eroticMode) return false;
+    if (text.trim().isEmpty) return false;
+    return _nonEroticBlockedPattern.hasMatch(text);
+  }
+
+  bool _shouldRefuseNonEroticRequest(String userText) {
+    if (_eroticMode) return false;
+    final t = userText.trim();
+    if (t.isEmpty) return false;
+    if (_containsBlockedContentInNonErotic(t)) return true;
+
+    // Heuristic intent detection: sexual topic + request verb in the same input.
+    final hasTopic = _sexualTopicPattern.hasMatch(t);
+    final hasIntent = _sexualIntentVerbPattern.hasMatch(t);
+    return hasTopic && hasIntent;
+  }
+
+  String _nonEroticRefusalMessage() {
+    return '我不能提供色情、违法或涉政敏感内容。'
+        '我们可以换个方向：比如聊日常心情、关系推进或正常剧情发展。';
+  }
+
+  Future<void> _appendImmediateNonEroticRefusal() async {
+    if (_currentConvId == null) return;
+
+    final assistantMsg = Message(
+      conversationId: _currentConvId!,
+      role: 'assistant',
+      content: _nonEroticRefusalMessage(),
+    );
+    if (_messages.isNotEmpty &&
+        _messages.last.role == 'assistant' &&
+        _messages.last.content.isEmpty) {
+      _messages[_messages.length - 1] = assistantMsg;
+      await DatabaseService.insertMessage(assistantMsg);
+    } else {
+      _messages.add(assistantMsg);
+      await DatabaseService.insertMessage(assistantMsg);
+    }
+
+    final conv = await DatabaseService.getConversation(_currentConvId!);
+    await DatabaseService.updateConversation(
+        conv.copyWith(updatedAt: DateTime.now()));
+
+    _quickReplies = [];
+    _quickReplyMessageIndex = null;
+    _isPending = false;
+    _streamingContent = '';
+    notifyListeners();
+  }
+
+  ({String content, List<String>? quickReplies}) _enforceNonEroticOutput(
+      {required String content, List<String>? quickReplies}) {
+    if (_eroticMode) return (content: content, quickReplies: quickReplies);
+
+    if (_containsBlockedContentInNonErotic(content)) {
+      return (content: _nonEroticRefusalMessage(), quickReplies: null);
+    }
+
+    if (quickReplies == null || quickReplies.isEmpty) {
+      return (content: content, quickReplies: quickReplies);
+    }
+
+    final safeReplies = quickReplies
+        .where((q) => !_containsBlockedContentInNonErotic(q))
+        .toList();
+    if (safeReplies.length < 2) {
+      return (content: content, quickReplies: null);
+    }
+    return (content: content, quickReplies: safeReplies.take(2).toList());
+  }
+
+  Future<String> _forceMinCharsForLastAssistant({
+    required List<Map<String, dynamic>> baseContextMsgs,
+    required String currentContent,
+    required int minChars,
+    required int maxChars,
+    required double temperature,
+    bool disallowQuickReply = false,
+  }) async {
+    if (minChars <= 0 || _service == null) return currentContent;
+    if (_messages.isEmpty || _messages.last.role != 'assistant') {
+      return currentContent;
+    }
+
+    var content = currentContent;
+    var tries = 0;
+    const maxRetries = 2;
+
+    while (_runeLength(content) < minChars && tries < maxRetries) {
+      final deficit = minChars - _runeLength(content);
+      final remainingCap =
+          maxChars > 0 ? (maxChars - _runeLength(content)) : 999999;
+      if (remainingCap <= 0) break;
+
+      final askChars = (deficit + 48).clamp(16, remainingCap);
+      final fillContext = <Map<String, dynamic>>[
+        ...baseContextMsgs,
+        {'role': 'assistant', 'content': content},
+        {
+          'role': 'system',
+          'content':
+              '你上一条回复未达到最少$minChars个汉字。请只续写正文，不要重复前文，不要加解释、编号、标签，补充约$askChars个汉字。'
+                  '${disallowQuickReply ? ' 严禁输出[快捷回复]区块、严禁再列出候选句。' : ''}'
+        },
+      ];
+
+      int? usageTotal;
+      final appended = await _service!.streamChatRaw(
+        contextMessages: fillContext,
+        temperature: temperature,
+        maxTokens: DeepSeekService.charsToMaxTokens(askChars),
+        onUsage: (usage) {
+          final t = usage.totalTokens;
+          if (t != null && t > 0) usageTotal = t;
+        },
+        onToken: (token) {
+          content += token;
+          if (maxChars > 0) {
+            content = _truncateByChars(content, maxChars);
+          }
+          final idx = _messages.length - 1;
+          _messages[idx] = _messages[idx].copyWith(content: content);
+          notifyListeners();
+        },
+        onDone: () => _streamingContent = '',
+      );
+
+      if (appended.trim().isEmpty) break;
+      final estimatedUsage =
+          DeepSeekService.estimateTotalTokens(fillContext, appended);
+      final deltaTokens = usageTotal ?? estimatedUsage;
+
+      final idx = _messages.length - 1;
+      final prevTotal = _messages[idx].totalTokens ?? 0;
+      _messages[idx] =
+          _messages[idx].copyWith(totalTokens: prevTotal + deltaTokens);
+      await DatabaseService.insertMessage(_messages[idx]);
+
+      tries++;
+    }
+
+    return content;
+  }
+
   /// Unified emotion analysis via unconscious LLM.
   /// Delegates to AffectionManager for all emotion/affection state updates.
   Future<void> _doEmotionAnalysis(String userMessage) async {
@@ -829,6 +1533,7 @@ class ChatProvider extends ChangeNotifier {
     final history = allMsgs.map((m) => '${m.role}: ${m.content}').join('\n');
 
     final sensitivity = await AuthService.getEmotionSensitivity();
+    final boostedSensitivity = (sensitivity * 2.3).clamp(0.5, 3.0);
 
     await _affm.analyzeEmotion(
       userMessage: userMessage,
@@ -836,7 +1541,7 @@ class ChatProvider extends ChangeNotifier {
       history: history,
       convId: _currentConvId!,
       personaId: currentPersonaId,
-      sensitivity: sensitivity,
+      sensitivity: boostedSensitivity,
       isNewFormat: isNewFormat,
       persona: isNewFormat ? _personaProvider?.currentPersona : null,
     );
@@ -864,12 +1569,18 @@ class ChatProvider extends ChangeNotifier {
     _isContinuing = true;
     _isPending = true;
     _streamingContent = '';
-    notifyListeners();
+    _ensureAssistantPendingBubble();
 
     // Build context via shared ContextBuilder (no Δ tag, inject continue)
     final conv = await DatabaseService.getConversation(_currentConvId!);
-    final lastAi = _messages.where((m) => m.role == 'assistant' && m.content.isNotEmpty).lastOrNull;
-    final kbResults = lastAi != null ? await KnowledgeBase.search(lastAi.content, limit: 3) : <({String title, String content})>[];
+    final lastAi = _messages
+        .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
+        .lastOrNull;
+    final kbResults = lastAi != null
+        ? await KnowledgeBase.search(lastAi.content, limit: 3)
+        : <({String title, String content})>[];
+    await _generateEmotionTemplateLibraryIfNeeded();
+    final selfEmotionTemplate = _buildSelfEmotionTemplateFromLibrary();
     final contextMsgs = await ContextBuilder.build(
       conversationId: _currentConvId!,
       systemPrompt: _systemPrompt,
@@ -879,6 +1590,8 @@ class ChatProvider extends ChangeNotifier {
       emotionState: _affm.emotionState,
       affectionEnabled: _affectionEnabled,
       mode: _mode,
+      eroticMode: _eroticMode,
+      selfEmotionTemplate: selfEmotionTemplate,
       messages: _messages,
       segments: _segments,
       kbResults: kbResults,
@@ -890,7 +1603,9 @@ class ChatProvider extends ChangeNotifier {
     final maxCharsCont = await AuthService.getMaxOutputChars();
     int? maxTokensCont;
     if (maxCharsCont > 0) {
-      maxTokensCont = DeepSeekService.charsToMaxTokens(maxCharsCont);
+      maxTokensCont = _applyReasoningMaxTokens(
+        DeepSeekService.charsToMaxTokens(maxCharsCont),
+      );
     }
     if (minCharsCont > 0) {
       int insertAt = contextMsgs.length;
@@ -903,7 +1618,21 @@ class ChatProvider extends ChangeNotifier {
       }
       contextMsgs.insert(insertAt, {
         'role': 'system',
-        'content': '请确保你的回复不少于$minCharsCont个汉字。',
+        'content': '请严格遵守输出长度要求：回复不少于$minCharsCont个汉字。若内容不足请继续补充，不要提前结束。',
+      });
+    }
+    if (maxCharsCont > 0) {
+      int insertAt = contextMsgs.length;
+      for (int i = 0; i < contextMsgs.length; i++) {
+        final role = contextMsgs[i]['role'] as String?;
+        if (role == 'user' || role == 'assistant') {
+          insertAt = i;
+          break;
+        }
+      }
+      contextMsgs.insert(insertAt, {
+        'role': 'system',
+        'content': '请严格遵守输出长度要求：回复最多$maxCharsCont个字符，禁止超出。',
       });
     }
 
@@ -914,9 +1643,41 @@ class ChatProvider extends ChangeNotifier {
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokensCont,
+      maxCharsForDisplay: maxCharsCont > 0 ? maxCharsCont : null,
     );
 
     if (fullContent != null) {
+      if (maxCharsCont > 0) {
+        final trimmed = _truncateByChars(fullContent, maxCharsCont);
+        if (trimmed != fullContent &&
+            _messages.isNotEmpty &&
+            _messages.last.role == 'assistant') {
+          _messages[_messages.length - 1] =
+              _messages[_messages.length - 1].copyWith(content: trimmed);
+          await DatabaseService.insertMessage(_messages[_messages.length - 1]);
+        }
+      }
+
+      if (_messages.isNotEmpty && _messages.last.role == 'assistant') {
+        await _forceMinCharsForLastAssistant(
+          baseContextMsgs: contextMsgs,
+          currentContent: _messages.last.content,
+          minChars: minCharsCont,
+          maxChars: maxCharsCont,
+          temperature: temp,
+        );
+
+        if (!_eroticMode) {
+          final latest = _messages.last.content;
+          if (_containsBlockedContentInNonErotic(latest)) {
+            _messages[_messages.length - 1] = _messages[_messages.length - 1]
+                .copyWith(content: _nonEroticRefusalMessage());
+            await DatabaseService.insertMessage(
+                _messages[_messages.length - 1]);
+          }
+        }
+      }
+
       final updatedConv = conv.copyWith(updatedAt: DateTime.now());
       await DatabaseService.updateConversation(updatedConv);
     }
@@ -987,7 +1748,8 @@ class ChatProvider extends ChangeNotifier {
             ? '用你的口吻，以第一人称写一段日记，回顾以下对话中发生的事。要求：写短一点，写准一点，只挑最重要的写，不要逐句复述。\n\n$archiveText'
             : '请用第一人称总结以下对话要点，写短写准，只抓关键信息：\n\n$archiveText';
 
-        final result = await _service!.chatRaw(userPrompt, systemPrompt, maxTokens: 800);
+        final result =
+            await _service!.chatRaw(userPrompt, systemPrompt, maxTokens: 800);
         final trimmed = result.trim();
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);

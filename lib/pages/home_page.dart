@@ -6,6 +6,7 @@ import '../providers/conversation_provider.dart';
 import '../providers/chat_provider.dart';
 import '../models/conversation.dart';
 import '../widgets/conversation_tile.dart';
+import '../providers/theme_provider.dart';
 import 'chat_page.dart';
 import 'summary_management_page.dart';
 import 'admin_login_page.dart';
@@ -47,6 +48,8 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final themeProvider = context.watch<ThemeProvider>();
+    final isDark = themeProvider.themeMode == ThemeMode.dark;
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -60,8 +63,8 @@ class _HomePageState extends State<HomePage> {
                   color: theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child:
-                    Icon(Icons.pets, size: 20, color: theme.colorScheme.primary),
+                child: Icon(Icons.pets,
+                    size: 20, color: theme.colorScheme.primary),
               ),
             ),
             const SizedBox(width: 8),
@@ -73,6 +76,11 @@ class _HomePageState extends State<HomePage> {
         centerTitle: true,
         scrolledUnderElevation: 1,
         actions: [
+          IconButton(
+            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+            tooltip: isDark ? '切换到日间模式' : '切换到夜间模式',
+            onPressed: () => themeProvider.toggleThemeMode(),
+          ),
           IconButton(
             icon: const Icon(Icons.tune),
             tooltip: 'API 设置',
@@ -163,7 +171,8 @@ class _HomePageState extends State<HomePage> {
                   }
                 },
                 onAvatarTap: () async {
-                  FilePickerResult? result = await FilePicker.platform.pickFiles(
+                  FilePickerResult? result =
+                      await FilePicker.platform.pickFiles(
                     type: FileType.image,
                   );
                   if (result != null && result.files.single.path != null) {
@@ -215,7 +224,8 @@ class _HomePageState extends State<HomePage> {
     });
 
     // Set default endpoint/model based on provider
-    void applyProviderDefaults(String provider, void Function(void Function()) setState) {
+    void applyProviderDefaults(
+        String provider, void Function(void Function()) setState) {
       if (provider == 'deepseek') {
         endpointCtrl.text = 'https://api.deepseek.com/v1/chat/completions';
         modelCtrl.text = 'deepseek-v4-flash';
@@ -299,14 +309,21 @@ class _HomePageState extends State<HomePage> {
                       border: const OutlineInputBorder(),
                       prefixIcon: const Icon(Icons.key, size: 20),
                       suffixIcon: IconButton(
-                        icon: Icon(obscureKey ? Icons.visibility_off : Icons.visibility, size: 20),
-                        onPressed: () => setDialogState(() => obscureKey = !obscureKey),
+                        icon: Icon(
+                            obscureKey
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                            size: 20),
+                        onPressed: () =>
+                            setDialogState(() => obscureKey = !obscureKey),
                       ),
                     ),
                   ),
                   if (_inlineError != null) ...[
                     const SizedBox(height: 12),
-                    Text(_inlineError!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                    Text(_inlineError!,
+                        style:
+                            const TextStyle(color: Colors.red, fontSize: 13)),
                   ],
                 ],
               ),
@@ -315,44 +332,46 @@ class _HomePageState extends State<HomePage> {
                     onPressed: () => Navigator.pop(outerCtx),
                     child: const Text('关闭')),
                 FilledButton(
-                  onPressed: _dialogSaving ? null : () async {
-                    final key = keyCtrl.text.trim();
-                    if (key.isEmpty) {
-                      setDialogState(() => _inlineError = '请先输入 API Key');
-                      return;
-                    }
-                    setDialogState(() {
-                      _dialogSaving = true;
-                      _inlineError = null;
-                    });
-                    try {
-                      await chatProvider.setApiConfig(
-                        providerType: selectedProvider,
-                        key: key,
-                        endpoint: endpointCtrl.text.trim().isNotEmpty
-                            ? endpointCtrl.text.trim()
-                            : null,
-                        model: modelCtrl.text.trim().isNotEmpty
-                            ? modelCtrl.text.trim()
-                            : null,
-                      );
-                      setDialogState(() {
-                        _dialogSaving = false;
-                        _dialogSaved = true;
-                      });
-                      // Auto-clear success icon after 2 seconds
-                      Future.delayed(const Duration(seconds: 2), () {
-                        if (outerCtx.mounted) {
-                          setDialogState(() => _dialogSaved = false);
-                        }
-                      });
-                    } catch (_) {
-                      setDialogState(() {
-                        _dialogSaving = false;
-                        _inlineError = '保存失败，请重试';
-                      });
-                    }
-                  },
+                  onPressed: _dialogSaving
+                      ? null
+                      : () async {
+                          final key = keyCtrl.text.trim();
+                          if (key.isEmpty) {
+                            setDialogState(() => _inlineError = '请先输入 API Key');
+                            return;
+                          }
+                          setDialogState(() {
+                            _dialogSaving = true;
+                            _inlineError = null;
+                          });
+                          try {
+                            await chatProvider.setApiConfig(
+                              providerType: selectedProvider,
+                              key: key,
+                              endpoint: endpointCtrl.text.trim().isNotEmpty
+                                  ? endpointCtrl.text.trim()
+                                  : null,
+                              model: modelCtrl.text.trim().isNotEmpty
+                                  ? modelCtrl.text.trim()
+                                  : null,
+                            );
+                            setDialogState(() {
+                              _dialogSaving = false;
+                              _dialogSaved = true;
+                            });
+                            // Auto-clear success icon after 2 seconds
+                            Future.delayed(const Duration(seconds: 2), () {
+                              if (outerCtx.mounted) {
+                                setDialogState(() => _dialogSaved = false);
+                              }
+                            });
+                          } catch (_) {
+                            setDialogState(() {
+                              _dialogSaving = false;
+                              _inlineError = '保存失败，请重试';
+                            });
+                          }
+                        },
                   child: Text(_dialogSaving ? '保存中...' : '确定'),
                 ),
               ],

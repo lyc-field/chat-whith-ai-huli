@@ -6,10 +6,10 @@ import '../models/segment_summary.dart';
 import '../providers/chat_provider.dart';
 import '../providers/conversation_provider.dart';
 import '../providers/persona_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/auth_service.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
-import '../widgets/tone_float_button.dart';
 import 'persona_settings_page.dart';
 import 'summary_management_page.dart';
 import 'affection_log_page.dart';
@@ -32,9 +32,12 @@ class _DisplayItem {
   final SegmentSummary? summary;
 
   const _DisplayItem._(this.type, this.messageIndex, this.summary);
-  factory _DisplayItem.message(int index) => _DisplayItem._(_ItemType.message, index, null);
-  factory _DisplayItem.divider(SegmentSummary s) => _DisplayItem._(_ItemType.divider, null, s);
-  factory _DisplayItem.summary(SegmentSummary s) => _DisplayItem._(_ItemType.summary, null, s);
+  factory _DisplayItem.message(int index) =>
+      _DisplayItem._(_ItemType.message, index, null);
+  factory _DisplayItem.divider(SegmentSummary s) =>
+      _DisplayItem._(_ItemType.divider, null, s);
+  factory _DisplayItem.summary(SegmentSummary s) =>
+      _DisplayItem._(_ItemType.summary, null, s);
 }
 
 class _ChatPageState extends State<ChatPage> {
@@ -45,6 +48,7 @@ class _ChatPageState extends State<ChatPage> {
   late String _title;
   bool _affectionBlink = false;
   String _mode = 'summary';
+  String _quickReplyTone = '正常';
 
   @override
   void initState() {
@@ -68,6 +72,10 @@ class _ChatPageState extends State<ChatPage> {
     }
 
     provider.addListener(_onProviderChange);
+    AuthService.getQuickReplyTone().then((tone) {
+      if (!mounted) return;
+      setState(() => _quickReplyTone = tone);
+    });
   }
 
   void _onProviderChange() {
@@ -128,14 +136,16 @@ class _ChatPageState extends State<ChatPage> {
         title: const Text('重置对话'),
         content: const Text('将清空所有对话记录和总结。确定吗？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () {
               context.read<ChatProvider>().resetConversation();
               _expandedSegments.clear();
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('对话已重置'), duration: Duration(seconds: 1)),
+                const SnackBar(
+                    content: Text('对话已重置'), duration: Duration(seconds: 1)),
               );
             },
             child: const Text('确定重置'),
@@ -148,8 +158,10 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _showOutputLengthDialog(BuildContext context) async {
     final minC = await AuthService.getMinOutputChars();
     final maxC = await AuthService.getMaxOutputChars();
-    final minCtrl = TextEditingController(text: minC > 0 ? minC.toString() : '');
-    final maxCtrl = TextEditingController(text: maxC > 0 ? maxC.toString() : '');
+    final minCtrl =
+        TextEditingController(text: minC > 0 ? minC.toString() : '');
+    final maxCtrl =
+        TextEditingController(text: maxC > 0 ? maxC.toString() : '');
     if (!context.mounted) return;
     showDialog(
       context: context,
@@ -178,20 +190,25 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
             const SizedBox(height: 10),
-            Text('0 表示不限制。中文 1 字约等于 2 token，软件自动换算。',
-                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(ctx).colorScheme.outline)),
+            Text('0 表示不限制。上限会按较严格规则自动换算 token，并在本地二次截断。',
+                style: Theme.of(ctx)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Theme.of(ctx).colorScheme.outline)),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () async {
               final minVal = int.tryParse(minCtrl.text.trim()) ?? 0;
               final maxVal = int.tryParse(maxCtrl.text.trim()) ?? 0;
               if (minVal > 0 && maxVal > 0 && minVal > maxVal) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('最少字数不能大于最多字数'), duration: Duration(seconds: 2)),
+                  const SnackBar(
+                      content: Text('最少字数不能大于最多字数'),
+                      duration: Duration(seconds: 2)),
                 );
                 return;
               }
@@ -222,7 +239,8 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () {
               final newTitle = controller.text.trim();
@@ -230,7 +248,9 @@ class _ChatPageState extends State<ChatPage> {
                 final chatProvider = context.read<ChatProvider>();
                 final convId = chatProvider.currentConvId;
                 if (convId != null) {
-                  context.read<ConversationProvider>().updateTitle(convId, newTitle);
+                  context
+                      .read<ConversationProvider>()
+                      .updateTitle(convId, newTitle);
                 }
                 setState(() => _title = newTitle);
               }
@@ -306,9 +326,19 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ChatProvider>();
+    final themeProvider = context.watch<ThemeProvider>();
+    final eroticTint = provider.eroticMode;
+    final pinkTint = const Color(0xFFFF4FA0).withOpacity(0.08);
+    const eroticAccent = Color(0xFFFF4FA0);
+    final isDark = themeProvider.themeMode == ThemeMode.dark;
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 50,
+        backgroundColor: eroticTint
+            ? Color.alphaBlend(const Color(0xFFFF4FA0).withOpacity(0.12),
+                Theme.of(context).colorScheme.surface)
+            : null,
         title: GestureDetector(
           onTap: () => _showRenameDialog(context),
           child: Row(
@@ -318,12 +348,14 @@ class _ChatPageState extends State<ChatPage> {
               if (provider.affectionEnabled && provider.currentConvId != null)
                 GestureDetector(
                   onTap: () {
-                    Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => AffectionLogPage(
-                        conversationId: provider.currentConvId!,
-                        title: _title,
-                      ),
-                    ));
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AffectionLogPage(
+                            conversationId: provider.currentConvId!,
+                            title: _title,
+                          ),
+                        ));
                   },
                   child: Container(
                     margin: const EdgeInsets.only(right: 8),
@@ -334,7 +366,7 @@ class _ChatPageState extends State<ChatPage> {
                           _affectionBlink
                               ? Icons.favorite
                               : Icons.favorite_border,
-                          size: 34,
+                          size: 30,
                           color: _affectionBlink
                               ? (provider.affectionIncreasing == true
                                   ? Colors.red.shade400
@@ -344,7 +376,7 @@ class _ChatPageState extends State<ChatPage> {
                         Text(
                           '${provider.affection}',
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.bold,
                             color: _affectionBlink
                                 ? (provider.affectionIncreasing == true
@@ -361,36 +393,50 @@ class _ChatPageState extends State<ChatPage> {
                 child: Text(_title, overflow: TextOverflow.ellipsis),
               ),
               const SizedBox(width: 4),
-              const Icon(Icons.edit, size: 14, color: Colors.grey),
+              const Icon(Icons.edit, size: 12, color: Colors.grey),
             ],
           ),
         ),
         centerTitle: true,
         actions: [
           IconButton(
-            icon: Icon(_mode == 'bookmark' ? Icons.flag : Icons.note_alt_outlined),
+            iconSize: 20,
+            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+            tooltip: isDark ? '切换到日间模式' : '切换到夜间模式',
+            onPressed: () => themeProvider.toggleThemeMode(),
+          ),
+          IconButton(
+            iconSize: 20,
+            icon: Icon(
+                _mode == 'bookmark' ? Icons.flag : Icons.note_alt_outlined),
             tooltip: _mode == 'bookmark' ? '书签管理' : '查看所有总结',
             onPressed: () {
               final id = provider.currentConvId;
               if (id == null) return;
               if (_mode == 'bookmark') {
-                Navigator.push(context,
+                Navigator.push(
+                    context,
                     MaterialPageRoute(
-                        builder: (_) => BookmarkManagementPage(conversationId: id)));
+                        builder: (_) =>
+                            BookmarkManagementPage(conversationId: id)));
               } else {
-                Navigator.push(context,
+                Navigator.push(
+                    context,
                     MaterialPageRoute(
-                        builder: (_) => SummaryManagementPage(conversationId: id)));
+                        builder: (_) =>
+                            SummaryManagementPage(conversationId: id)));
               }
             },
           ),
           if (provider.messages.isNotEmpty)
             IconButton(
+              iconSize: 20,
               icon: const Icon(Icons.refresh_rounded),
               tooltip: '重置对话',
               onPressed: () => _showResetDialog(context),
             ),
           IconButton(
+            iconSize: 20,
             icon: Icon((provider.systemPrompt != null &&
                     provider.systemPrompt!.isNotEmpty)
                 ? Icons.auto_awesome
@@ -400,176 +446,136 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (_, constraints) {
-          if (!_fabInitialized) {
-            _fabOffset = Offset(
-              constraints.maxWidth - 60,
-              180, // below the tone float button
-            );
-            _tuneFabOffset = Offset(
-              16,
-              constraints.maxHeight - 150, // bottom-left area
-            );
-            _fabInitialized = true;
-          }
-          return Stack(
-            children: [
-              // Chat background image
-              if (provider.chatBackground != null && provider.chatBackground!.isNotEmpty)
-                Positioned.fill(
-                  child: Image.file(
-                    File(provider.chatBackground!),
-                    fit: BoxFit.cover,
-                    opacity: const AlwaysStoppedAnimation(0.15),
-                  ),
-                ),
-              Column(children: [
-                if (provider.error != null)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: Row(children: [
-                      Icon(Icons.error_outline, size: 18,
-                          color: Theme.of(context).colorScheme.onErrorContainer),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(provider.error!,
+      body: Stack(
+        children: [
+          if (eroticTint)
+            Positioned.fill(
+              child: Container(color: pinkTint),
+            ),
+          // Chat background image
+          if (provider.chatBackground != null &&
+              provider.chatBackground!.isNotEmpty)
+            Positioned.fill(
+              child: Image.file(
+                File(provider.chatBackground!),
+                fit: BoxFit.cover,
+              ),
+            ),
+          Column(children: [
+            if (provider.error != null)
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: Row(children: [
+                  Icon(Icons.error_outline,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onErrorContainer),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text(provider.error!,
                           style: TextStyle(
-                              color: Theme.of(context).colorScheme.onErrorContainer,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onErrorContainer,
                               fontSize: 13))),
-                      GestureDetector(
-                        onTap: () {
-                          provider.clearError();
-                          _expandedSegments.clear();
-                        },
-                        child: Icon(Icons.close, size: 18,
-                            color: Theme.of(context).colorScheme.onErrorContainer),
-                      ),
-                    ]),
+                  GestureDetector(
+                    onTap: () {
+                      provider.clearError();
+                      _expandedSegments.clear();
+                    },
+                    child: Icon(Icons.close,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.onErrorContainer),
                   ),
-                if (provider.showSummaryPrompt && provider.pendingSummaryIndex != null)
-                  _buildSummaryPromptBanner(provider),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      if (_initializing)
-                        const Center(child: CircularProgressIndicator())
-                      else if (provider.messages.isEmpty)
-                        Center(
-                            child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.forum_outlined, size: 64,
+                ]),
+              ),
+            if (provider.showSummaryPrompt &&
+                provider.pendingSummaryIndex != null)
+              _buildSummaryPromptBanner(provider),
+            Expanded(
+              child: _initializing
+                  ? const Center(child: CircularProgressIndicator())
+                  : provider.messages.isEmpty
+                      ? Center(
+                          child:
+                              Column(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.forum_outlined,
+                              size: 64,
                               color: Theme.of(context).colorScheme.outline),
                           const SizedBox(height: 16),
                           Text('开始新对话',
                               style: Theme.of(context).textTheme.bodyLarge),
                         ]))
-                      else
-                        _buildMessageList(provider),
-                      if (provider.currentConvId != null)
-                        const ToneFloatButton(),
-                    ],
-                  ),
-                ),
-                if (provider.quickReplies.isNotEmpty && !provider.isPending && provider.affectionEnabled)
-                  _buildQuickReplyChips(provider),
-                MessageInput(
-                  onSend: (text) {
-                    provider.sendMessage(text);
-                    _pendingInputText = null;
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _scrollToBottom());
-                  },
-                  enabled: !provider.isPending,
-                  prefillText: _pendingInputText,
-                ),
-              ]),
-              // Draggable continue FAB
-              if (provider.currentConvId != null && !provider.isPending)
-                Positioned(
-                  left: _fabOffset.dx.clamp(0, constraints.maxWidth - 48),
-                  top: _fabOffset.dy.clamp(0, constraints.maxHeight - 48),
-                  child: GestureDetector(
-                    onTap: () => provider.sendContinueCommand(),
-                    onLongPressStart: (_) => _fabDragOrigin = Offset.zero,
-                    onLongPressMoveUpdate: (d) {
-                      setState(() {
-                        _fabOffset += d.offsetFromOrigin - _fabDragOrigin;
-                        _fabDragOrigin = d.offsetFromOrigin;
-                      });
+                      : _buildMessageList(provider),
+            ),
+            if (provider.quickReplies.isNotEmpty &&
+                !provider.isPending &&
+                provider.affectionEnabled)
+              _buildQuickReplyChips(provider, eroticTint: eroticTint),
+            SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MessageInput(
+                    onSend: (text) {
+                      provider.sendMessage(text);
+                      _pendingInputText = null;
+                      WidgetsBinding.instance
+                          .addPostFrameCallback((_) => _scrollToBottom());
                     },
-                    onLongPressEnd: (_) => _fabDragOrigin = Offset.zero,
-                    child: Material(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      shape: const CircleBorder(),
-                      elevation: 6,
-                      shadowColor: Colors.black38,
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        alignment: Alignment.center,
-                        child: Icon(Icons.fast_forward,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.onPrimaryContainer),
-                      ),
-                    ),
+                    enabled: !provider.isPending,
+                    prefillText: _pendingInputText,
+                    eroticMode: eroticTint,
+                    useSafeArea: false,
                   ),
-                ),
-              // Draggable output length settings button
-              if (provider.currentConvId != null)
-                Positioned(
-                  left: _tuneFabOffset.dx.clamp(0, constraints.maxWidth - 40),
-                  top: _tuneFabOffset.dy.clamp(0, constraints.maxHeight - 40),
-                  child: GestureDetector(
-                    onTap: () => _showOutputLengthDialog(context),
-                    onLongPressStart: (_) => _tuneDragOrigin = Offset.zero,
-                    onLongPressMoveUpdate: (d) {
-                      setState(() {
-                        _tuneFabOffset += d.offsetFromOrigin - _tuneDragOrigin;
-                        _tuneDragOrigin = d.offsetFromOrigin;
-                      });
-                    },
-                    onLongPressEnd: (_) => _tuneDragOrigin = Offset.zero,
-                    child: Material(
-                      color: Theme.of(context).colorScheme.secondaryContainer,
-                      shape: const CircleBorder(),
-                      elevation: 4,
-                      shadowColor: Colors.black38,
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        alignment: Alignment.center,
-                        child: Icon(Icons.tune,
-                            size: 18,
-                            color: Theme.of(context).colorScheme.onSecondaryContainer),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          );
-        },
+                  _buildBottomActionBar(provider,
+                      eroticTint: eroticTint, eroticAccent: eroticAccent),
+                ],
+              ),
+            ),
+          ]),
+        ],
       ),
     );
   }
 
-  Widget _buildQuickReplyChips(ChatProvider provider) {
+  Widget _buildQuickReplyChips(ChatProvider provider,
+      {required bool eroticTint}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-      child: Row(children: [
-        for (int i = 0; i < provider.quickReplies.length; i++)
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                  left: i == 0 ? 0 : 4, right: i == provider.quickReplies.length - 1 ? 0 : 4),
-              child: _QuickReplyChip(
-                index: i,
-                label: provider.quickReplies[i],
-                onTap: (text) => _fillInput(text),
+      child: Container(
+        decoration: eroticTint
+            ? BoxDecoration(
+                color: const Color(0xFFFF4FA0).withOpacity(0.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: const Color(0xFFFF4FA0).withOpacity(0.2),
+                ),
+              )
+            : null,
+        padding: eroticTint
+            ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4)
+            : EdgeInsets.zero,
+        child: Row(children: [
+          for (int i = 0; i < provider.quickReplies.length; i++)
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(
+                    left: i == 0 ? 0 : 4,
+                    right: i == provider.quickReplies.length - 1 ? 0 : 4),
+                child: _QuickReplyChip(
+                  index: i,
+                  label: provider.quickReplies[i],
+                  eroticTint: eroticTint,
+                  onTap: (text) => _fillInput(text),
+                ),
               ),
             ),
-          ),
-      ]),
+        ]),
+      ),
     );
   }
 
@@ -579,12 +585,194 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {});
   }
 
+  Future<void> _pickTone() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final t in AuthService.quickReplyTones)
+                  ListTile(
+                    leading: Icon(
+                      t == '下流'
+                          ? Icons.whatshot
+                          : t == '优雅'
+                              ? Icons.auto_awesome
+                              : Icons.chat_bubble_outline,
+                    ),
+                    title: Text(t),
+                    trailing: _quickReplyTone == t
+                        ? Icon(Icons.check,
+                            color: Theme.of(context).colorScheme.primary)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, t),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked == null || picked == _quickReplyTone) return;
+    await AuthService.setQuickReplyTone(picked);
+    if (!mounted) return;
+    setState(() => _quickReplyTone = picked);
+  }
+
+  Future<void> _pickDeepSeekModel() async {
+    final provider = context.read<ChatProvider>();
+    if (provider.providerType != 'deepseek') return;
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final currentModel = provider.deepSeekModel;
+        return AlertDialog(
+          title: const Text('选择 DeepSeek 模型'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                value: 'deepseek-v4-flash',
+                groupValue: currentModel,
+                title: const Text('v4-flash'),
+                subtitle: const Text('速度更快，适合日常聊天'),
+                onChanged: (value) => Navigator.pop(ctx, value),
+              ),
+              RadioListTile<String>(
+                value: 'deepseek-v4-pro',
+                groupValue: currentModel,
+                title: const Text('v4-pro'),
+                subtitle: const Text('能力更强，适合更细腻的回复'),
+                onChanged: (value) => Navigator.pop(ctx, value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (selected == null || selected == provider.deepSeekModel) return;
+    await provider.setDeepSeekModel(selected);
+    if (!mounted) return;
+    final label = selected == 'deepseek-v4-pro' ? 'v4-pro' : 'v4-flash';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已切换到 $label，当前上下文未重置'),
+        duration: const Duration(milliseconds: 1200),
+      ),
+    );
+  }
+
+  Widget _buildBottomActionBar(ChatProvider provider,
+      {required bool eroticTint, required Color eroticAccent}) {
+    final theme = Theme.of(context);
+    final canContinue = provider.currentConvId != null && !provider.isPending;
+    final bg = eroticTint
+        ? Color.alphaBlend(
+            eroticAccent.withOpacity(0.10),
+            theme.colorScheme.surface,
+          )
+        : theme.colorScheme.surface;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(6, 2, 6, 4),
+      decoration: BoxDecoration(
+        color: bg,
+        border: Border(
+          top: BorderSide(
+            color: eroticTint
+                ? eroticAccent.withOpacity(0.22)
+                : theme.colorScheme.outlineVariant.withOpacity(0.2),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Center(
+              child: IconButton.filled(
+                onPressed: provider.providerType == 'deepseek'
+                    ? _pickDeepSeekModel
+                    : null,
+                tooltip: provider.providerType == 'deepseek'
+                    ? 'DeepSeek 模型：${provider.isDeepSeekPro ? 'v4-pro' : 'v4-flash'}'
+                    : '当前提供商不支持模型切换',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                constraints:
+                    const BoxConstraints.tightFor(width: 34, height: 34),
+                icon: Icon(
+                  provider.isDeepSeekPro ? Icons.cloud : Icons.cloud_outlined,
+                  size: 16,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: IconButton.filledTonal(
+                onPressed: _pickTone,
+                tooltip: '快捷回复语气：$_quickReplyTone',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                constraints:
+                    const BoxConstraints.tightFor(width: 34, height: 34),
+                icon: Icon(
+                  _quickReplyTone == '下流'
+                      ? Icons.whatshot
+                      : _quickReplyTone == '优雅'
+                          ? Icons.auto_awesome
+                          : Icons.chat_bubble_outline,
+                  size: 16,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: IconButton.filled(
+                onPressed:
+                    canContinue ? () => provider.sendContinueCommand() : null,
+                tooltip: '继续回复',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                constraints:
+                    const BoxConstraints.tightFor(width: 34, height: 34),
+                icon: const Icon(Icons.fast_forward, size: 16),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: IconButton.filledTonal(
+                onPressed: () => _showOutputLengthDialog(context),
+                tooltip: '输出字数限制',
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                constraints:
+                    const BoxConstraints.tightFor(width: 34, height: 34),
+                icon: const Icon(Icons.tune, size: 16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String? _pendingInputText;
-  Offset _fabOffset = const Offset(-60, -80);
-  bool _fabInitialized = false;
-  Offset _fabDragOrigin = Offset.zero;
-  Offset _tuneFabOffset = Offset.zero;
-  Offset _tuneDragOrigin = Offset.zero;
 
   Widget _buildSummaryPromptBanner(ChatProvider provider) {
     final theme = Theme.of(context);
@@ -593,14 +781,13 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       color: theme.colorScheme.tertiaryContainer,
       child: Row(children: [
-        Icon(Icons.summarize, size: 16,
-            color: theme.colorScheme.onTertiaryContainer),
+        Icon(Icons.summarize,
+            size: 16, color: theme.colorScheme.onTertiaryContainer),
         const SizedBox(width: 6),
         Expanded(
           child: Text('对话已达到20轮，建议对前5轮对话进行总结',
               style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.onTertiaryContainer)),
+                  fontSize: 12, color: theme.colorScheme.onTertiaryContainer)),
         ),
         TextButton(
           onPressed: () {
@@ -668,15 +855,22 @@ class _ChatPageState extends State<ChatPage> {
                     ChatBubble(
                       message: msg,
                       archived: msg.segmentIndex != null,
-                      onEdit: isAi || msg.segmentIndex != null || msg.content.isEmpty
+                      onEdit: isAi ||
+                              msg.segmentIndex != null ||
+                              msg.content.isEmpty
                           ? null
                           : (c) => provider.editMessage(item.messageIndex!, c),
-                      onDelete: isAi || msg.segmentIndex != null || provider.remainingRecalls <= 0
+                      onDelete: isAi ||
+                              msg.segmentIndex != null ||
+                              provider.remainingRecalls <= 0
                           ? null
                           : () => provider.deleteMessage(item.messageIndex!),
-                      onRegenerate: !isAi || msg.segmentIndex != null || msg.content.isEmpty
+                      onRegenerate: !isAi ||
+                              msg.segmentIndex != null ||
+                              msg.content.isEmpty
                           ? null
-                          : () => provider.regenerateResponse(item.messageIndex!),
+                          : () =>
+                              provider.regenerateResponse(item.messageIndex!),
                       onToggleBookmark: _mode == 'bookmark' &&
                               msg.role != 'system' &&
                               msg.content.isNotEmpty
@@ -724,9 +918,12 @@ class _ChatPageState extends State<ChatPage> {
                           if (provider.isSelfDestructMode)
                             Text(
                               ' ⚠',
-                              style: TextStyle(fontSize: 11, color: Colors.red.shade400),
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.red.shade400),
                             ),
-                          const Text(' ›', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          const Text(' ›',
+                              style:
+                                  TextStyle(fontSize: 11, color: Colors.grey)),
                         ],
                       ),
                     ),
@@ -767,7 +964,8 @@ class _ChatPageState extends State<ChatPage> {
           Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
               size: 16, color: theme.colorScheme.outline),
           const SizedBox(width: 6),
-          Text('第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
+          Text(
+              '第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
               style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
           const Text(' | ', style: TextStyle(fontSize: 12, color: Colors.grey)),
           Text(isExpanded ? '折叠' : '展开',
@@ -789,12 +987,12 @@ class _ChatPageState extends State<ChatPage> {
         decoration: BoxDecoration(
           color: theme.colorScheme.tertiaryContainer.withOpacity(0.3),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: theme.colorScheme.tertiary.withOpacity(0.25)),
+          border:
+              Border.all(color: theme.colorScheme.tertiary.withOpacity(0.25)),
         ),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(Icons.summarize_outlined, size: 14,
-              color: theme.colorScheme.tertiary.withOpacity(0.7)),
+          Icon(Icons.summarize_outlined,
+              size: 14, color: theme.colorScheme.tertiary.withOpacity(0.7)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -823,13 +1021,16 @@ class _ChatPageState extends State<ChatPage> {
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(
-              left: 16, right: 16, top: 16,
+              left: 16,
+              right: 16,
+              top: 16,
               bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('总结第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
+              Text(
+                  '总结第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
                   style: Theme.of(ctx).textTheme.titleMedium),
               const SizedBox(height: 12),
               TextField(
@@ -849,7 +1050,8 @@ class _ChatPageState extends State<ChatPage> {
                   TextButton(
                     onPressed: () {
                       provider.updateSegmentSummary(seg.segmentIndex, '');
-                      setState(() => _expandedSegments.remove(seg.segmentIndex));
+                      setState(
+                          () => _expandedSegments.remove(seg.segmentIndex));
                       Navigator.pop(ctx);
                     },
                     child: const Text('清除总结'),
@@ -882,11 +1084,13 @@ class _ChatPageState extends State<ChatPage> {
 class _QuickReplyChip extends StatelessWidget {
   final int index;
   final String label;
+  final bool eroticTint;
   final ValueChanged<String> onTap;
 
   const _QuickReplyChip({
     required this.index,
     required this.label,
+    required this.eroticTint,
     required this.onTap,
   });
 
@@ -894,16 +1098,27 @@ class _QuickReplyChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isFirst = index == 0;
+    const eroticColor = Color(0xFFFF4FA0);
     return GestureDetector(
       onTap: () => onTap(label),
       onLongPress: () => _showPreview(context),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: isFirst
-              ? theme.colorScheme.surfaceVariant
-              : theme.colorScheme.secondaryContainer,
+          color: eroticTint
+              ? Color.alphaBlend(
+                  eroticColor.withOpacity(isFirst ? 0.16 : 0.22),
+                  isFirst
+                      ? theme.colorScheme.surfaceVariant
+                      : theme.colorScheme.secondaryContainer,
+                )
+              : isFirst
+                  ? theme.colorScheme.surfaceVariant
+                  : theme.colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(8),
+          border: eroticTint
+              ? Border.all(color: eroticColor.withOpacity(0.28))
+              : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(isFirst ? Icons.shield_outlined : Icons.auto_awesome,
@@ -941,8 +1156,8 @@ class _QuickReplyChip extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
           ),
           child: SingleChildScrollView(
-            child: Text(label,
-                style: const TextStyle(fontSize: 15, height: 1.6)),
+            child:
+                Text(label, style: const TextStyle(fontSize: 15, height: 1.6)),
           ),
         ),
       ),

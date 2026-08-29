@@ -12,6 +12,8 @@ import 'auth_service.dart';
 /// [notifyListeners] after any mutating call.
 class AffectionManager {
   static const roundsUntilAffection = 5;
+  // Decay code is intentionally preserved but disabled by product decision.
+  static const bool _enableEmotionDecay = false;
 
   double affection = 30.0;
   double previousRawAffection = 30.0;
@@ -30,6 +32,13 @@ class AffectionManager {
       emotionState != null && EmotionTables.isSelfDestructMode(emotionState!);
 
   bool get shouldJudgeAffection => roundCount > roundsUntilAffection;
+
+  static bool shouldUsePersonaEmotionState({
+    required bool isNewFormat,
+    required String? personaId,
+  }) {
+    return isNewFormat && personaId != null && personaId.isNotEmpty;
+  }
 
   // ─── Delta parsing (pure, static) ─────────────────────────
 
@@ -67,13 +76,14 @@ class AffectionManager {
 
   /// Reset affection + emotion for old-format conversations (writes DB).
   Future<void> resetForOldFormat(String convId) async {
-    final initialAffection = (await AuthService.getAdminDefaultAffection()).toDouble();
+    final initialAffection =
+        (await AuthService.getAdminDefaultAffection()).toDouble();
     affection = initialAffection;
     previousRawAffection = initialAffection;
     affectionIncreasing = null;
     if (emotionState != null) {
-      emotionState =
-          EmotionState.createDefault(convId, initialAffection: initialAffection);
+      emotionState = EmotionState.createDefault(convId,
+          initialAffection: initialAffection);
       await DatabaseService.updateEmotionState(emotionState!);
     }
   }
@@ -120,10 +130,10 @@ class AffectionManager {
   /// Apply time-based decay to emotion values (old-format conversations).
   /// Call once when loading a conversation.
   void applyDecayOnLoad() {
+    if (!_enableEmotionDecay) return;
     if (emotionState == null) return;
     final now = DateTime.now();
-    final elapsed =
-        now.difference(emotionState!.lastUpdate).inSeconds / 3600.0;
+    final elapsed = now.difference(emotionState!.lastUpdate).inSeconds / 3600.0;
     if (elapsed <= 0) return;
 
     emotionState!.currentLibidoOther = DecayCalculator.applyDecay(
@@ -216,50 +226,58 @@ class AffectionManager {
   }) async {
     if (analyzer == null || emotionState == null) return;
 
+    final state = emotionState!;
+
     try {
       final deltas = await analyzer!.analyzeAndAdjust(
-        state: emotionState!,
+        state: state,
         history: history,
         latestMsg: userMessage,
       );
 
       // Apply sensitivity multiplier to all deltas
-      final lo =
-          ((deltas['libido_other_delta'] as double) * sensitivity).clamp(-2.0, 2.0);
+      final lo = ((deltas['libido_other_delta'] as double) * sensitivity)
+          .clamp(-2.0, 2.0);
       final ao = ((deltas['aggression_other_delta'] as double) * sensitivity)
           .clamp(-2.0, 2.0);
-      final ls =
-          ((deltas['libido_self_delta'] as double) * sensitivity).clamp(-2.0, 2.0);
+      final ls = ((deltas['libido_self_delta'] as double) * sensitivity)
+          .clamp(-2.0, 2.0);
       final as_ = ((deltas['aggression_self_delta'] as double) * sensitivity)
           .clamp(-2.0, 2.0);
 
-      emotionState!.currentLibidoOther =
-          (emotionState!.currentLibidoOther + lo).clamp(0.0, 50.0);
-      emotionState!.currentAggressionOther =
-          (emotionState!.currentAggressionOther + ao).clamp(0.0, 50.0);
-      emotionState!.currentLibidoSelf =
-          (emotionState!.currentLibidoSelf + ls).clamp(0.0, 50.0);
-      emotionState!.currentAggressionSelf =
-          (emotionState!.currentAggressionSelf + as_).clamp(0.0, 50.0);
+      state.currentLibidoOther =
+          (state.currentLibidoOther + lo).clamp(0.0, 50.0);
+      state.currentAggressionOther =
+          (state.currentAggressionOther + ao).clamp(0.0, 50.0);
+      state.currentLibidoSelf = (state.currentLibidoSelf + ls).clamp(0.0, 50.0);
+      state.currentAggressionSelf =
+          (state.currentAggressionSelf + as_).clamp(0.0, 50.0);
 
-      emotionState!.baseLibidoOther = (emotionState!.baseLibidoOther +
+      state.baseLibidoOther = (state.baseLibidoOther +
               (deltas['base_libido_other_delta'] as double) * sensitivity)
           .clamp(0.0, 50.0);
-      emotionState!.baseAggressionOther = (emotionState!.baseAggressionOther +
+      state.baseAggressionOther = (state.baseAggressionOther +
               (deltas['base_aggression_other_delta'] as double) * sensitivity)
           .clamp(0.0, 50.0);
-      emotionState!.baseLibidoSelf = (emotionState!.baseLibidoSelf +
+      state.baseLibidoSelf = (state.baseLibidoSelf +
               (deltas['base_libido_self_delta'] as double) * sensitivity)
           .clamp(0.0, 50.0);
-      emotionState!.baseAggressionSelf = (emotionState!.baseAggressionSelf +
+      state.baseAggressionSelf = (state.baseAggressionSelf +
               (deltas['base_aggression_self_delta'] as double) * sensitivity)
           .clamp(0.0, 50.0);
 
-      emotionState!.turnCount++;
-      emotionState!.lastUpdate = DateTime.now();
-      emotionState!.lastInteraction = DateTime.now();
+      state.turnCount++;
+      state.lastUpdate = DateTime.now();
+      state.lastInteraction = DateTime.now();
 
-      await DatabaseService.updateEmotionState(emotionState!);
+      if (shouldUsePersonaEmotionState(
+        isNewFormat: isNewFormat,
+        personaId: personaId,
+      )) {
+        await DatabaseService.updatePersonaEmotionState(state);
+      } else {
+        await DatabaseService.updateEmotionState(state);
+      }
 
       await DatabaseService.insertEmotionLog(EmotionLog(
         id: const Uuid().v4(),
@@ -276,7 +294,8 @@ class AffectionManager {
 
       // Flush persona affection for new format
       if (isNewFormat && persona != null) {
-        await flushToPersona(persona);
+        persona.affection = affection;
+        await DatabaseService.updateAIPersona(persona);
       }
     } catch (e) {
       debugPrint('[AffectionManager] 潜意识分析失败，下轮重试: $e');
