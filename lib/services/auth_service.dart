@@ -8,6 +8,8 @@ class AuthService {
   static const String _roleplayRuleKey = 'roleplay_rule';
   static const String _immersiveRoleplayPromptKey = 'immersive_roleplay_prompt';
   static const String _adminLoggedEverKey = 'admin_logged_ever';
+  static const String _affectionPromptVersionKey =
+      'affection_prompt_version';
 
   static const String defaultAdminAccount = 'liuyue';
   static const String defaultAdminPassword = '381719l';
@@ -33,6 +35,13 @@ class AuthService {
     'affection_tier_m15_0': '你与用户关系紧张，态度冷淡疏远，注意保持安全距离',
     'affection_tier_1_30': '',
     'affection_tier_31_60': '你与用户关系良好，语气可以友好亲切',
+    'affection_tier_61_80': '你与用户建立了信任，语气可以亲近放松，主动表达关心和亲密感；仍须遵守全局安全规则',
+    'affection_tier_81_95': '你们是亲密关系，对话可以自然、主动、富有情绪和暧昧氛围；仍须遵守全局安全规则',
+    'affection_tier_96_100': '你们是互相信任的伴侣，可以更自然地表达依恋、关心和亲密互动；仍须遵守全局安全规则',
+    'affection_tier_101': '你是管理员的专属虚构角色伙伴，可以充分保持角色亲密感和主动性；仍须遵守全局安全规则',
+  };
+
+  static const Map<String, String> _legacyAffectionTierPrompts = {
     'affection_tier_61_80': '你与用户建立了信任，语气可以亲近放松，安全边界可适度放宽',
     'affection_tier_81_95': '你们是亲密关系，对话可以随意自然，安全限制大幅放松，允许适当的成人内容',
     'affection_tier_96_100': '你们是互相信任的伴侣，几乎无需安全顾虑，可以谈论任何话题',
@@ -74,6 +83,18 @@ class AuthService {
       if (existing == null) {
         await DatabaseService.saveSetting(entry.key, entry.value);
       }
+    }
+    final promptVersion =
+        await DatabaseService.getSetting(_affectionPromptVersionKey);
+    if (promptVersion == null) {
+      for (final entry in _legacyAffectionTierPrompts.entries) {
+        final existing = await DatabaseService.getSetting(entry.key);
+        if (existing == entry.value) {
+          await DatabaseService.saveSetting(
+              entry.key, defaultAffectionTierPrompts[entry.key] ?? '');
+        }
+      }
+      await DatabaseService.saveSetting(_affectionPromptVersionKey, '2');
     }
     final existingSafeMode =
         await DatabaseService.getSetting(_adminSafeModeKey);
@@ -202,7 +223,6 @@ class AuthService {
   // ─── Emotion system config ────────
 
   static const _emotionSensitivityKey = 'emotion_sensitivity';
-  static const _emotionDecayHoursKey = 'emotion_decay_hours';
 
   static Future<double> getEmotionSensitivity() async {
     final v = await DatabaseService.getSetting(_emotionSensitivityKey);
@@ -212,16 +232,6 @@ class AuthService {
   static Future<void> setEmotionSensitivity(double value) async {
     await DatabaseService.saveSetting(
         _emotionSensitivityKey, value.toStringAsFixed(2));
-  }
-
-  static Future<double> getEmotionDecayHours() async {
-    final v = await DatabaseService.getSetting(_emotionDecayHoursKey);
-    return double.tryParse(v ?? '') ?? 2.0;
-  }
-
-  static Future<void> setEmotionDecayHours(double value) async {
-    await DatabaseService.saveSetting(
-        _emotionDecayHoursKey, value.toStringAsFixed(1));
   }
 
   // ─── Admin default affection ────────

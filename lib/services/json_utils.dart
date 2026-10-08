@@ -15,9 +15,25 @@ class JsonUtils {
 
   var depth = 0;
   var end = -1;
+  var inString = false;
+  var escaped = false;
   for (var i = start; i < text.length; i++) {
-    if (text[i] == '{') depth++;
-    if (text[i] == '}') {
+    final char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char == r'\') {
+        escaped = true;
+      } else if (char == '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char == '"') {
+      inString = true;
+    } else if (char == '{') {
+      depth++;
+    } else if (char == '}') {
       depth--;
       if (depth == 0) {
         end = i;

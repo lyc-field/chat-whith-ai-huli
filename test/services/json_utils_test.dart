@@ -28,6 +28,14 @@ void main() {
       expect(result['outer'], {'inner': [1, 2, 3]});
     });
 
+    test('ignores braces inside JSON strings', () {
+      final result = JsonUtils.extractJson(
+        'prefix {"reply":"正文包含 {括号}","quick_replies":["继续"]} suffix',
+      );
+      expect(result?['reply'], '正文包含 {括号}');
+      expect(result?['quick_replies'], ['继续']);
+    });
+
     test('handles unicode in JSON content', () {
       final result = JsonUtils.extractJson('{"msg": "你好世界"}');
       expect(result, isNotNull);

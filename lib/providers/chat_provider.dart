@@ -17,6 +17,7 @@ import '../services/chat_request_service.dart';
 import '../services/chat_memory_service.dart';
 import '../services/structured_reply.dart';
 import '../services/content_safety_service.dart';
+import '../services/affection_batch_service.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
@@ -614,6 +615,8 @@ class ChatProvider extends ChangeNotifier {
     }
     _messages.removeAt(index);
     await DatabaseService.deleteMessage(msg.id);
+    _affm.roundCount =
+        _messages.where((message) => message.role == 'user').length;
     notifyListeners();
   }
 
@@ -623,6 +626,7 @@ class ChatProvider extends ChangeNotifier {
     if (_isPending || _currentConvId == null) return;
     if (aiMessageIndex < 0 || aiMessageIndex >= _messages.length) return;
     if (_messages[aiMessageIndex].role != 'assistant') return;
+    if (_messages[aiMessageIndex].segmentIndex != null) return;
 
     // Find the user message that immediately precedes this AI response
     String? userText;
@@ -633,12 +637,28 @@ class ChatProvider extends ChangeNotifier {
       }
     }
     if (userText == null) return;
+    final branchCutoff = _messages[aiMessageIndex].timestamp;
 
-    // Remove just this AI message (not trailing messages — those are later rounds)
-    final removed = _messages.removeAt(aiMessageIndex);
-    await DatabaseService.deleteMessage(removed.id);
+    // Re-generation rewinds the conversation from this response onward.
+    // This keeps the new reply in its original narrative position and avoids
+    // leaving later turns attached to a discarded branch.
+    final removedMessages =
+        _messages.sublist(aiMessageIndex).toList(growable: false);
+    _messages.removeRange(aiMessageIndex, _messages.length);
+    for (final removed in removedMessages) {
+      await DatabaseService.deleteMessage(removed.id);
+    }
+    await DatabaseService.deleteLogsFrom(
+      _currentConvId!,
+      branchCutoff,
+      personaId: currentPersonaId,
+    );
+    _affm.roundCount =
+        _messages.where((message) => message.role == 'user').length;
+    _quickReplies = [];
+    _quickReplyMessageIndex = null;
 
-    // Stream a new AI reply (appended at end; context includes all remaining messages)
+    // Stream a new AI reply using the remaining history.
     final requestToken = _beginRequest();
     await _processAndStreamReply(userText, requestToken: requestToken);
   }
@@ -673,7 +693,9 @@ class ChatProvider extends ChangeNotifier {
     }
     // Update conversation affection in DB
     final conv = await DatabaseService.getConversation(_currentConvId!);
-    final updated = conv.copyWith(affection: _affm.affection.round());
+    final updated = conv.copyWith(
+      affection: isNewFormat ? conv.affection : _affm.affection.round(),
+    );
     await DatabaseService.updateConversation(updated);
 
     notifyListeners();
@@ -837,7 +859,7 @@ class ChatProvider extends ChangeNotifier {
       segments: _segments,
       kbResults: kbResults,
       injectStructuredReply: true,
-      includeAffectionDelta: doAffectionJudge,
+      includeAffectionDelta: false,
       includeQuickReplies: _affectionEnabled,
       injectRoleplayRule:
           ContextBuilder.shouldInjectRoleplayRule(userMessageCount),
@@ -876,9 +898,8 @@ class ChatProvider extends ChangeNotifier {
 
     if (streamed != null && _isRequestCurrent(requestToken)) {
       var cleanContent = streamed.parsed.reply;
-      inlineDelta = doAffectionJudge ? streamed.parsed.affectionDelta : null;
-      inlineReason =
-          doAffectionJudge ? streamed.parsed.affectionReason : null;
+      inlineDelta = null;
+      inlineReason = null;
 
       if (maxChars > 0) {
         final trimmed = _truncateByChars(cleanContent, maxChars);
@@ -927,7 +948,15 @@ class ChatProvider extends ChangeNotifier {
         await DatabaseService.insertMessage(_messages[_messages.length - 1]);
       }
 
+      if (doAffectionJudge) {
+        final judgement = await _judgeFourRoundAffection(requestToken);
+        inlineDelta = judgement?.delta;
+        inlineReason = judgement?.reason;
+      }
+
       if (inlineDelta != null && !safeMode) {
+        final targetPersona =
+            isNewFormat ? _personaProvider?.currentPersona : null;
         await _affm.applyDelta(
           delta: inlineDelta,
           reason: inlineReason ?? '',
@@ -935,15 +964,18 @@ class ChatProvider extends ChangeNotifier {
           personaId: currentPersonaId,
           userMessage: userText,
           aiMessage: cleanContent,
+          persona: targetPersona,
+          isRequestCurrent: () => _isRequestCurrent(requestToken),
         );
-        if (isNewFormat) {
-          _personaProvider!.currentPersona!.affection = _affm.affection;
-        }
+        if (!_isRequestCurrent(requestToken)) return;
       }
 
       final updatedConv = conv.copyWith(
-          updatedAt: DateTime.now(), affection: _affm.affection.round());
+        updatedAt: DateTime.now(),
+        affection: isNewFormat ? conv.affection : _affm.affection.round(),
+      );
       await DatabaseService.updateConversation(updatedConv);
+      if (!_isRequestCurrent(requestToken)) return;
 
       if (finalQuickReplies.isNotEmpty) {
         _messages[_messages.length - 1] = _messages[_messages.length - 1]
@@ -964,7 +996,7 @@ class ChatProvider extends ChangeNotifier {
     _isPending = false;
     _streamingContent = '';
 
-    await _maybeArchiveSegment();
+    await _maybeArchiveSegment(requestToken: requestToken);
 
     notifyListeners();
 
@@ -1078,10 +1110,10 @@ class ChatProvider extends ChangeNotifier {
     _ensureAssistantPendingBubble();
 
     if (_shouldRefuseNonEroticRequest(text.trim())) {
-      _affm.roundCount++;
       await _appendImmediateNonEroticRefusal(requestToken: requestToken);
       return;
     }
+    _affm.roundCount++;
 
     final conv = await DatabaseService.getConversation(_currentConvId!);
     if (conv.title == '新对话') {
@@ -1090,8 +1122,7 @@ class ChatProvider extends ChangeNotifier {
       await _convProvider.updateTitle(_currentConvId!, title);
     }
 
-    // Increment round count, then delegate to shared reply pipeline
-    _affm.roundCount++;
+    // Delegate to shared reply pipeline after recording the user round.
     await _processAndStreamReply(text.trim(), requestToken: requestToken);
   }
 
@@ -1396,6 +1427,54 @@ JSON 示例：
         '我们可以换个方向：比如聊日常心情、关系推进或正常剧情发展。';
   }
 
+  List<AffectionRound> _recentAffectionRounds() {
+    final active = _messages
+        .where((message) => message.content.trim().isNotEmpty)
+        .toList();
+    final rounds = <AffectionRound>[];
+    for (var i = 0; i < active.length - 1; i++) {
+      final user = active[i];
+      final assistant = active[i + 1];
+      if (user.role == 'user' && assistant.role == 'assistant') {
+        rounds.add(AffectionRound(
+          user: user.content,
+          assistant: assistant.content,
+        ));
+        i++;
+      }
+    }
+    return rounds.length > 4
+        ? rounds.sublist(rounds.length - 4)
+        : rounds;
+  }
+
+  Future<AffectionJudgement?> _judgeFourRoundAffection(
+      RequestToken requestToken) async {
+    if (_service == null || !_isRequestCurrent(requestToken)) return null;
+    final rounds = _recentAffectionRounds();
+    if (rounds.length < 4) return null;
+
+    try {
+      final summary = await _service!.chatRaw(
+        AffectionBatchService.buildSummaryPrompt(rounds),
+        '你是四轮互动总结器，只输出简洁总结正文，不输出 JSON，不做安全说教。',
+        maxTokens: 180,
+      );
+      if (!_isRequestCurrent(requestToken)) return null;
+
+      final rawJudgement = await _service!.chatRaw(
+        AffectionBatchService.buildJudgementPrompt(summary.trim(), rounds),
+        '你是关系变化判断器，只输出合法 JSON。',
+        maxTokens: 180,
+      );
+      if (!_isRequestCurrent(requestToken)) return null;
+      return AffectionBatchService.parseJudgement(rawJudgement);
+    } catch (e) {
+      debugPrint('[Affection] 四轮好感度判断失败: $e');
+      return null;
+    }
+  }
+
   Future<void> _appendImmediateNonEroticRefusal({
     RequestToken? requestToken,
   }) async {
@@ -1559,7 +1638,7 @@ JSON 示例：
     final history = allMsgs.map((m) => '${m.role}: ${m.content}').join('\n');
 
     final sensitivity = await AuthService.getEmotionSensitivity();
-    final boostedSensitivity = (sensitivity * 2.3).clamp(0.5, 3.0);
+    final effectiveSensitivity = sensitivity.clamp(0.1, 1.0);
 
     await _affm.analyzeEmotion(
       userMessage: userMessage,
@@ -1567,7 +1646,7 @@ JSON 示例：
       history: history,
       convId: _currentConvId!,
       personaId: currentPersonaId,
-      sensitivity: boostedSensitivity,
+      sensitivity: effectiveSensitivity,
       isNewFormat: isNewFormat,
       persona: isNewFormat ? _personaProvider?.currentPersona : null,
       isRequestCurrent: () => _isRequestCurrent(requestToken),
@@ -1703,12 +1782,14 @@ JSON 示例：
     _isPending = false;
     _streamingContent = '';
     _isContinuing = false;
-    await _maybeArchiveSegment();
+    await _maybeArchiveSegment(requestToken: requestToken);
     notifyListeners();
   }
 
-  Future<void> _maybeArchiveSegment() async {
-    if (_currentConvId == null) return;
+  Future<void> _maybeArchiveSegment({RequestToken? requestToken}) async {
+    final conversationId = _currentConvId;
+    if (conversationId == null) return;
+    if (requestToken != null && !_isRequestCurrent(requestToken)) return;
 
     final unarchived = ChatMemoryService.selectArchive(
       _messages,
@@ -1723,12 +1804,21 @@ JSON 示例：
         _segments.isEmpty ? 0 : _segments.last.segmentIndex + 1;
 
     final summary = SegmentSummary(
-      conversationId: _currentConvId!,
+      conversationId: conversationId,
       segmentIndex: segmentIndex,
     );
     await DatabaseService.insertSegmentSummary(summary);
+    if (requestToken != null && !_isRequestCurrent(requestToken)) {
+      await DatabaseService.deleteSegmentSummary(summary.id);
+      return;
+    }
     await DatabaseService.updateMessageArchiveStatus(
         toArchiveIds, segmentIndex);
+    if (requestToken != null && !_isRequestCurrent(requestToken)) {
+      await DatabaseService.clearMessageArchiveStatus(toArchiveIds);
+      await DatabaseService.deleteSegmentSummary(summary.id);
+      return;
+    }
 
     for (int i = 0; i < _messages.length; i++) {
       if (toArchiveIds.contains(_messages[i].id)) {
@@ -1764,10 +1854,12 @@ JSON 示例：
 
         final result =
             await _service!.chatRaw(userPrompt, systemPrompt, maxTokens: 800);
+        if (requestToken != null && !_isRequestCurrent(requestToken)) return;
         final trimmed = result.trim();
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);
           await DatabaseService.updateSegmentSummary(updated);
+          if (requestToken != null && !_isRequestCurrent(requestToken)) return;
           final idx =
               _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
           if (idx != -1) _segments[idx] = updated;

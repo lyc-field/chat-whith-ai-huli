@@ -583,6 +583,17 @@ class DatabaseService {
     await batch.commit(noResult: true);
   }
 
+  static Future<void> clearMessageArchiveStatus(
+      List<String> messageIds) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final id in messageIds) {
+      batch.update('messages', {'segment_index': null},
+          where: 'id = ?', whereArgs: [id]);
+    }
+    await batch.commit(noResult: true);
+  }
+
   /// ─── Segment Summary CRUD ────────
 
   static Future<List<SegmentSummary>> getSegmentSummaries(
@@ -615,6 +626,11 @@ class DatabaseService {
         where: 'conversation_id = ?', whereArgs: [conversationId]);
   }
 
+  static Future<void> deleteSegmentSummary(String id) async {
+    final db = await database;
+    await db.delete('segment_summaries', where: 'id = ?', whereArgs: [id]);
+  }
+
   /// ─── Affection Log CRUD ────────
 
   static Future<void> deleteAffectionLogs(String conversationId) async {
@@ -623,10 +639,64 @@ class DatabaseService {
         where: 'conversation_id = ?', whereArgs: [conversationId]);
   }
 
+  static Future<void> deleteLogsFrom(
+    String conversationId,
+    DateTime cutoff, {
+    String? personaId,
+  }) async {
+    final db = await database;
+    final where = personaId == null
+        ? 'conversation_id = ? AND created_at >= ?'
+        : 'conversation_id = ? AND persona_id = ? AND created_at >= ?';
+    final args = personaId == null
+        ? [conversationId, cutoff.toIso8601String()]
+        : [conversationId, personaId, cutoff.toIso8601String()];
+    await db.delete('affection_logs', where: where, whereArgs: args);
+    await db.delete('emotion_logs', where: where, whereArgs: args);
+  }
+
   static Future<void> insertAffectionLog(AffectionLog log) async {
     final db = await database;
     await db.insert('affection_logs', log.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  static Future<void> persistAffectionDelta({
+    required EmotionState state,
+    required AffectionLog log,
+    AIPersona? persona,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      if (state.personaId != null && state.personaId!.isNotEmpty) {
+        await txn.update(
+          'persona_emotion_states',
+          state.toMap(),
+          where: 'id = ?',
+          whereArgs: [state.id],
+        );
+      } else {
+        await txn.update(
+          'emotion_states',
+          state.toMap(),
+          where: 'id = ?',
+          whereArgs: [state.id],
+        );
+      }
+      await txn.insert(
+        'affection_logs',
+        log.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      if (persona != null) {
+        await txn.update(
+          'ai_personas',
+          persona.toMap(),
+          where: 'id = ?',
+          whereArgs: [persona.id],
+        );
+      }
+    });
   }
 
   static Future<List<AffectionLog>> getAffectionLogs(String conversationId,

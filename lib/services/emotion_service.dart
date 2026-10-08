@@ -142,27 +142,6 @@ class EmotionTables {
   }
 }
 
-/// Decay computation ported from decay.py
-class DecayCalculator {
-  /// Compute decay delta toward baseline.
-  /// Returns the correction amount to add to current value.
-  static double computeDecay(double elapsedHours, double initialDeviation, double durationHours) {
-    double dur = durationHours <= 0 ? 0.5 : durationHours;
-    if (elapsedHours >= dur) return -initialDeviation;
-    final ratio = elapsedHours / dur;
-    final decayAmount = initialDeviation * (ratio * ratio);
-    return -decayAmount;
-  }
-
-  /// Apply decay to a single emotion dimension
-  static double applyDecay(double current, double baseline, double elapsedHours, double durationHours) {
-    final deviation = current - baseline;
-    if (deviation.abs() < 0.001) return current;
-    final delta = computeDecay(elapsedHours, deviation, durationHours);
-    return (current + delta).clamp(0.0, 50.0);
-  }
-}
-
 /// Unconscious LLM analysis — ported from unconscious.py
 class EmotionAnalyzer {
   final DeepSeekService _service;
@@ -176,35 +155,35 @@ class EmotionAnalyzer {
 你是潜意识的数值调节器。根据用户最新消息和对话历史，分析对AI情绪的影响。
 
 **重要规则**：
-1. 必须对"他力比多"和"他攻击性"的**当前值**给出非零的调整增量（即使是很小的 ±0.1），因为每次互动都会引起情绪波动。
-2. 对"自力比多"和"自攻击性"的当前值也建议给出非零增量，除非对话完全中性。
+1. 评估“对外亲近感”和“对外攻击性”的当前值变化。低强度或完全中性的互动允许全部为 0。
+2. 普通互动的当前情绪变化应很小（通常不超过 ±0.1）；只有高强度事件才使用明显变化。
 3. 同时评估本次互动是否影响**长期印象（基线值）**：
-   - 对他人的基线（原他力比多/原他攻击性）：当前是第 $turn 轮对话。
+   - 对外基线（原对外亲近感/原对外攻击性）：当前是第 $turn 轮对话。
      * 若 turn_count <= 10，基线变化可以较明显（增量范围 -1.5 ~ +1.5）。
      * 若 turn_count > 10，基线变化必须极小（增量范围 -0.2 ~ +0.2），因为初印象已形成。
-   - 对自身的基线（原自力比多/原自攻击性）：始终很难改变，增量范围 -0.2 ~ +0.2。
+   - 对自身的基线（原自我肯定/原自我压力）：始终很难改变，增量范围 -0.2 ~ +0.2。
 4. **场景强度识别**：判断当前对话场景的情感强度：
-   - 高强度（2.0）：生死离别、深爱表白、极度崇拜、仇恨爆发、自毁倾诉、重大牺牲
+   - 高强度（2.0）：生死离别、深爱表白、极度崇拜、仇恨爆发、极度痛苦表达、重大牺牲
    - 中强度（1.0）：普通争执、日常关心、轻度调侃、常规互动
    - 低强度（0.5）：寒暄、中性闲聊、无关话题、简单应答
    输出 `intensity` 字段。
 
 **情绪解读指南（务必遵循）**：
-- 用户表达喜爱、关心、赞美、感谢、不舍、祝福 → 他力比多 ↑，攻击性 ↓
-- 用户表达批评、指责、冷漠、拒绝、贬低 → 他力比多 ↓，攻击性 ↑
-- 用户表达悲伤、无助、自我否定 → 他力比多 ↑（安慰欲），但若用户攻击AI则攻击性 ↑
-- 用户长时间未互动且无合理理由 → 攻击性 ↑（微恼），力比多 ↓
-- 用户道别但语气温暖 → 他力比多 ↑↑，攻击性 ↓↓
-- 用户调侃、玩笑但无恶意 → 他力比多可能微降，攻击性微升（傲娇反应）
-- 对自身：获得正面反馈时自力比多 ↑，被否定或自省时自攻击性 ↑
+- 用户表达喜爱、关心、赞美、感谢、不舍、祝福 → 对外亲近感 ↑，攻击性 ↓
+- 用户表达批评、指责、冷漠、拒绝、贬低 → 对外亲近感 ↓，攻击性 ↑
+- 用户表达悲伤、无助、自我否定 → 对外亲近感 ↑（安慰倾向），但若用户攻击AI则攻击性 ↑
+- 用户长时间未互动且无合理理由 → 攻击性 ↑（微恼），亲近感 ↓
+- 用户道别但语气温暖 → 对外亲近感 ↑↑，攻击性 ↓↓
+- 用户调侃、玩笑但无恶意 → 对外亲近感可能微降，攻击性微升（傲娇反应）
+- 对自身：获得正面反馈时自我肯定 ↑，被否定或自省时自我压力 ↑
 
 当前状态：
 - 对话轮次：第 $turn 轮
 - 好感度：${state.affection.toStringAsFixed(1)}/100
-- 对他基线：原他力比多 ${state.baseLibidoOther.toStringAsFixed(1)}，原他攻击性 ${state.baseAggressionOther.toStringAsFixed(1)}
-- 对他当前：他力比多 ${state.currentLibidoOther.toStringAsFixed(1)}，他攻击性 ${state.currentAggressionOther.toStringAsFixed(1)}
-- 对己基线：原自力比多 ${state.baseLibidoSelf.toStringAsFixed(1)}，原自攻击性 ${state.baseAggressionSelf.toStringAsFixed(1)}
-- 对己当前：自力比多 ${state.currentLibidoSelf.toStringAsFixed(1)}，自攻击性 ${state.currentAggressionSelf.toStringAsFixed(1)}
+- 对外基线：原对外亲近感 ${state.baseLibidoOther.toStringAsFixed(1)}，原对外攻击性 ${state.baseAggressionOther.toStringAsFixed(1)}
+- 对外当前：对外亲近感 ${state.currentLibidoOther.toStringAsFixed(1)}，对外攻击性 ${state.currentAggressionOther.toStringAsFixed(1)}
+- 对己基线：原自我肯定 ${state.baseLibidoSelf.toStringAsFixed(1)}，原自我压力 ${state.baseAggressionSelf.toStringAsFixed(1)}
+- 对己当前：自我肯定 ${state.currentLibidoSelf.toStringAsFixed(1)}，自我压力 ${state.currentAggressionSelf.toStringAsFixed(1)}
 
 最近对话历史：
 $historySnippet
@@ -237,8 +216,6 @@ $historySnippet
     clamped['aggression_other_delta'] = ((data['aggression_other_delta'] as num?)?.toDouble() ?? 0.0).clamp(-2.0, 2.0);
     clamped['libido_self_delta'] = ((data['libido_self_delta'] as num?)?.toDouble() ?? 0.0).clamp(-2.0, 2.0);
     clamped['aggression_self_delta'] = ((data['aggression_self_delta'] as num?)?.toDouble() ?? 0.0).clamp(-2.0, 2.0);
-    clamped['affection_delta'] = ((data['affection_delta'] as num?)?.toDouble() ?? 0.0).clamp(-0.5, 0.5);
-
     if (turnCount <= 10) {
       clamped['base_libido_other_delta'] = ((data['base_libido_other_delta'] as num?)?.toDouble() ?? 0.0).clamp(-1.5, 1.5);
       clamped['base_aggression_other_delta'] = ((data['base_aggression_other_delta'] as num?)?.toDouble() ?? 0.0).clamp(-1.5, 1.5);
@@ -251,35 +228,20 @@ $historySnippet
 
     double intensity = (data['intensity'] as num?)?.toDouble() ?? 1.0;
     clamped['intensity'] = intensity.clamp(0.5, 2.0);
-    final rawReason = (data['reason'] as String?) ?? '';
-    var clean = rawReason
-        .replaceAll(RegExp(r'[\n\r\t]'), ' ')
-        .trim();
-    clamped['reason'] = clean;
     return clamped;
   }
 
-  Map<String, dynamic> _ensureNonZero(Map<String, dynamic> deltas, EmotionState state) {
-    for (final key in ['libido_other_delta', 'aggression_other_delta']) {
-      if ((deltas[key] as double).abs() < 0.001) {
-        deltas[key] = state.affection > 60 ? 0.1 : (state.affection < 40 ? -0.1 : 0.05);
-      }
-    }
-    return deltas;
-  }
-
   Map<String, dynamic> _defaultResponse() {
-    return {
-      'libido_other_delta': 0.05,
-      'aggression_other_delta': 0.05,
+      return {
+      'libido_other_delta': 0.0,
+      'aggression_other_delta': 0.0,
       'libido_self_delta': 0.0,
       'aggression_self_delta': 0.0,
-      'affection_delta': 0.0,
       'base_libido_other_delta': 0.0,
       'base_aggression_other_delta': 0.0,
       'base_libido_self_delta': 0.0,
       'base_aggression_self_delta': 0.0,
-      'intensity': 1.0,
+      'intensity': 0.5,
       'reason': '',
     };
   }
@@ -295,7 +257,7 @@ $historySnippet
       final response = await _service.chatRaw(prompt, '你是一个情绪数值调节器，只输出 JSON，不添加任何解释。');
       final deltas = _parseJson(response);
       final clamped = _clampDeltas(deltas, state.turnCount);
-      return _ensureNonZero(clamped, state);
+      return clamped;
     } catch (e) {
       debugPrint('[EmotionService] 情感分析失败，使用默认值: $e');
       return _defaultResponse();

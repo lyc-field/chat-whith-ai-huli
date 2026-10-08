@@ -104,48 +104,4 @@ void main() {
     });
   });
 
-  // ─── DecayCalculator ────────────────────────────────────
-
-  group('DecayCalculator', () {
-    test('computeDecay returns 0 at elapsed 0', () {
-      final delta = DecayCalculator.computeDecay(0, 10.0, 2.0);
-      expect(delta, closeTo(0.0, 0.001));
-    });
-
-    test('computeDecay returns full negative deviation at elapsed >= duration', () {
-      final delta = DecayCalculator.computeDecay(2.0, 10.0, 2.0);
-      expect(delta, closeTo(-10.0, 0.001));
-    });
-
-    test('computeDecay is quadratic (partial elapsed)', () {
-      // elapsed = 1h, deviation = 10, duration = 2h → ratio = 0.5, decay = 10 * 0.25 = 2.5
-      final delta = DecayCalculator.computeDecay(1.0, 10.0, 2.0);
-      expect(delta, closeTo(-2.5, 0.001));
-    });
-
-    test('applyDecay returns current if no deviation', () {
-      final result = DecayCalculator.applyDecay(25.0, 25.0, 1.0, 2.0);
-      expect(result, closeTo(25.0, 0.001));
-    });
-
-    test('applyDecay moves current toward baseline', () {
-      final result = DecayCalculator.applyDecay(35.0, 25.0, 1.0, 2.0);
-      // deviation = 10, duration = 2, ratio = 0.5, decay = -2.5, result = 32.5
-      expect(result, closeTo(32.5, 0.001));
-    });
-
-    test('applyDecay clamps to 0..50', () {
-      // current is already at 0, decay shouldn't go negative
-      final result = DecayCalculator.applyDecay(0.0, 25.0, 1.0, 2.0);
-      expect(result, greaterThanOrEqualTo(0.0));
-      expect(result, lessThanOrEqualTo(50.0));
-    });
-
-    test('applyDecay with duration <= 0 defaults to 0.5', () {
-      // duration 0 → defaults to 0.5, elapsed=0.4 → ratio=0.8, decay=dev*0.64
-      final result = DecayCalculator.applyDecay(35.0, 25.0, 0.4, 0.0);
-      // deviation=10, duration->0.5, ratio=0.8, decay=10*0.64=6.4, result=28.6
-      expect(result, closeTo(28.6, 0.01));
-    });
-  });
 }

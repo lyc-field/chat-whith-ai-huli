@@ -51,7 +51,13 @@ class EmotionStateRepository {
     AIPersona persona,
   ) async {
     final existing = await loadForPersona(conversationId, persona.id);
-    if (existing != null) return existing;
+    if (existing != null) {
+      if ((existing.affection - persona.affection).abs() > 0.001) {
+        existing.affection = persona.affection;
+        await save(existing);
+      }
+      return existing;
+    }
 
     final legacy = await loadForConversation(conversationId);
     final state = legacy == null

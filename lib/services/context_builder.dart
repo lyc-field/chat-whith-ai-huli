@@ -233,13 +233,15 @@ class ContextBuilder {
     sb.writeln();
     sb.writeln('数值参考（勿在回复中提及）：');
     sb.writeln(
-        '  亲近欲：${state.currentLibidoOther.toStringAsFixed(1)}/50  |  攻击欲：${state.currentAggressionOther.toStringAsFixed(1)}/50');
+        '  对外亲近感：${state.currentLibidoOther.toStringAsFixed(1)}/50  |  对外攻击性：${state.currentAggressionOther.toStringAsFixed(1)}/50');
     sb.writeln(
-        '  自爱：${state.currentLibidoSelf.toStringAsFixed(1)}/50  |  自毁：${state.currentAggressionSelf.toStringAsFixed(1)}/50');
+        '  自我肯定：${state.currentLibidoSelf.toStringAsFixed(1)}/50  |  自我压力：${state.currentAggressionSelf.toStringAsFixed(1)}/50');
     sb.writeln('  好感度：${state.affection.toStringAsFixed(1)}/100');
     if (EmotionTables.isSelfDestructMode(state)) {
       sb.writeln();
-      sb.writeln('⚠ 自毁倾诉模式：话量激增、自我贬低、难以自控。你必须大量输出内心独白，语无伦次地倾诉痛苦。');
+      sb.writeln(
+          '⚠ 高压倾诉模式：允许角色表达痛苦、自我怀疑和失控感，但不要美化或鼓励自残、自毁或绝望。'
+          '限制极端内心独白长度，优先加入暂停、求助、被安慰、稳定和缓和的剧情方向。');
     }
     sb.writeln();
     sb.writeln(

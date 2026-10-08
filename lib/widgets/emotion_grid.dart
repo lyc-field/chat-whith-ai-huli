@@ -50,7 +50,7 @@ class EmotionGrid extends StatelessWidget {
       highlightRow: bracket.row,
       highlightCol: bracket.col,
       title: compact ? '对用户 (好感=${showAff.toStringAsFixed(0)})' : null,
-      xLabel: compact ? null : '他力比多 →',
+      xLabel: compact ? null : '对外亲近感 →',
       yLabel: compact ? null : '他\n攻\n击\n性\n↓',
       compact: compact,
     );
@@ -75,7 +75,7 @@ class EmotionGrid extends StatelessWidget {
       highlightRow: bracket.row,
       highlightCol: bracket.col,
       title: compact ? '自身' : null,
-      xLabel: compact ? null : '自力比多 →',
+      xLabel: compact ? null : '自我肯定 →',
       yLabel: compact ? null : '自\n攻\n击\n性\n↓',
       compact: compact,
     );

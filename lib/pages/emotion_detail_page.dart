@@ -196,22 +196,22 @@ class _EmotionDetailPageState extends State<EmotionDetailPage> {
         _infoRow('对用户情绪', presentation.towardsUserEmotion, null),
         _infoRow('自身状态', presentation.selfEmotion, null),
         _infoRow(
-          '他力比多',
+          '对外亲近感',
           '${state.currentLibidoOther.toStringAsFixed(1)} / 50（基线 ${state.baseLibidoOther.toStringAsFixed(1)}）',
           Colors.blue,
         ),
         _infoRow(
-          '他攻击性',
+          '对外攻击性',
           '${state.currentAggressionOther.toStringAsFixed(1)} / 50（基线 ${state.baseAggressionOther.toStringAsFixed(1)}）',
           Colors.red,
         ),
         _infoRow(
-          '自力比多',
+          '自我肯定',
           '${state.currentLibidoSelf.toStringAsFixed(1)} / 50（基线 ${state.baseLibidoSelf.toStringAsFixed(1)}）',
           Colors.indigo,
         ),
         _infoRow(
-          '自攻击性',
+          '自我压力',
           '${state.currentAggressionSelf.toStringAsFixed(1)} / 50（基线 ${state.baseAggressionSelf.toStringAsFixed(1)}）',
           Colors.orange,
         ),

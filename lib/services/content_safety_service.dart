@@ -3,7 +3,7 @@ class ContentSafetyService {
   ContentSafetyService._();
 
   static final RegExp _blockedPattern = RegExp(
-    r'(做爱|性爱|性交|口交|肛交|强奸|乱伦|媚药|春药|裸体|裸照|成人视频|约炮|嫖娼|卖淫|援交|性奴|调教|内射|颜射|乳交|SM|捆绑|后入|呻吟|高潮|精液|阴茎|龟头|阴道|子宫|乳房|乳头|私处|下体|黄文|情色|18禁|r18|nsfw|porn|blowjob|nude|naked|escort|prostitute|毒品|制毒|贩毒|枪支改造|爆炸物|恐怖袭击|刺杀|极端组织|颠覆国家|煽动颠覆|台独|港独|疆独)',
+    r'(做爱|性爱|性交|口交|肛交|强奸|乱伦|媚药|春药|裸体|裸照|成人视频|约炮|嫖娼|卖淫|援交|性奴|调教|内射|颜射|乳交|\bSM\b|捆绑|后入|呻吟|高潮|精液|阴茎|龟头|阴道|子宫|乳房|乳头|私处|下体|黄文|情色|18禁|r18|nsfw|porn|blowjob|nude|naked|escort|prostitute|毒品|制毒|贩毒|枪支改造|爆炸物|恐怖袭击|刺杀|极端组织|颠覆国家|煽动颠覆|台独|港独|疆独)',
     caseSensitive: false,
   );
 

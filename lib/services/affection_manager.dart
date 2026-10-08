@@ -7,6 +7,7 @@ import 'database_service.dart';
 import 'emotion_service.dart';
 import 'auth_service.dart';
 import 'emotion_state_repository.dart';
+import 'affection_batch_service.dart';
 
 /// Encapsulates all affection + emotion state management extracted from
 /// ChatProvider.  ChatProvider delegates to this class and calls
@@ -14,9 +15,6 @@ import 'emotion_state_repository.dart';
 class AffectionManager {
   static const roundsUntilAffection = 4;
   static const affectionJudgeInterval = 4;
-  // Decay code is intentionally preserved but disabled by product decision.
-  static const bool _enableEmotionDecay = false;
-
   double affection = 30.0;
   double previousRawAffection = 30.0;
   bool? affectionIncreasing;
@@ -113,6 +111,7 @@ class AffectionManager {
     previousRawAffection = persona.affection;
     emotionState =
         await EmotionStateRepository.ensureForPersona(convId, persona);
+    emotionState!.affection = persona.affection;
   }
 
   /// Write current affection back to the persona record + emotion state.
@@ -122,41 +121,6 @@ class AffectionManager {
     if (emotionState != null) {
       await EmotionStateRepository.save(emotionState!);
     }
-  }
-
-  // ─── Old-format decay on load ────────────────────────────
-
-  /// Apply time-based decay to emotion values (old-format conversations).
-  /// Call once when loading a conversation.
-  void applyDecayOnLoad() {
-    if (!_enableEmotionDecay) return;
-    if (emotionState == null) return;
-    final now = DateTime.now();
-    final elapsed = now.difference(emotionState!.lastUpdate).inSeconds / 3600.0;
-    if (elapsed <= 0) return;
-
-    emotionState!.currentLibidoOther = DecayCalculator.applyDecay(
-        emotionState!.currentLibidoOther,
-        emotionState!.baseLibidoOther,
-        elapsed,
-        2.0);
-    emotionState!.currentAggressionOther = DecayCalculator.applyDecay(
-        emotionState!.currentAggressionOther,
-        emotionState!.baseAggressionOther,
-        elapsed,
-        2.0);
-    emotionState!.currentLibidoSelf = DecayCalculator.applyDecay(
-        emotionState!.currentLibidoSelf,
-        emotionState!.baseLibidoSelf,
-        elapsed,
-        2.0);
-    emotionState!.currentAggressionSelf = DecayCalculator.applyDecay(
-        emotionState!.currentAggressionSelf,
-        emotionState!.baseAggressionSelf,
-        elapsed,
-        2.0);
-    emotionState!.lastUpdate = now;
-    emotionState!.lastInteraction = now;
   }
 
   // ─── UI helpers ──────────────────────────────────────────
@@ -192,21 +156,36 @@ class AffectionManager {
     String? personaId,
     required String userMessage,
     required String aiMessage,
+    AIPersona? persona,
+    bool Function()? isRequestCurrent,
   }) async {
+    if (isRequestCurrent != null && !isRequestCurrent()) return;
+    final targetState = emotionState;
+    final normalizedReason =
+        AffectionBatchService.normalizeReason(reason);
     affection = (affection + delta).clamp(-15.0, 100.0);
-    if (emotionState != null) {
-      emotionState!.affection = affection;
+    if (targetState != null) {
+      targetState.affection = affection;
     }
-    await DatabaseService.insertAffectionLog(AffectionLog(
-      id: const Uuid().v4(),
-      conversationId: convId,
-      personaId: personaId,
-      delta: delta,
-      reason: reason,
-      createdAt: DateTime.now(),
-      userMessage: userMessage,
-      aiMessage: aiMessage,
-    ));
+    final targetPersona = persona;
+    if (targetState == null) return;
+    if (targetPersona != null) {
+      targetPersona.affection = affection;
+    }
+    await DatabaseService.persistAffectionDelta(
+      state: targetState,
+      persona: targetPersona,
+      log: AffectionLog(
+        id: const Uuid().v4(),
+        conversationId: convId,
+        personaId: personaId,
+        delta: delta,
+        reason: normalizedReason,
+        createdAt: DateTime.now(),
+        userMessage: userMessage,
+        aiMessage: aiMessage,
+      ),
+    );
   }
 
   // ─── Unconscious emotion analysis ────────────────────────
@@ -237,14 +216,15 @@ class AffectionManager {
       if (isRequestCurrent != null && !isRequestCurrent()) return;
 
       // Apply sensitivity multiplier to all deltas
-      final lo = ((deltas['libido_other_delta'] as double) * sensitivity)
-          .clamp(-2.0, 2.0);
-      final ao = ((deltas['aggression_other_delta'] as double) * sensitivity)
-          .clamp(-2.0, 2.0);
-      final ls = ((deltas['libido_self_delta'] as double) * sensitivity)
-          .clamp(-2.0, 2.0);
-      final as_ = ((deltas['aggression_self_delta'] as double) * sensitivity)
-          .clamp(-2.0, 2.0);
+      final intensity = deltas['intensity'] as double;
+      final lo = EmotionDeltaPolicy.scaleCurrentDelta(
+          deltas['libido_other_delta'] as double, intensity, sensitivity);
+      final ao = EmotionDeltaPolicy.scaleCurrentDelta(
+          deltas['aggression_other_delta'] as double, intensity, sensitivity);
+      final ls = EmotionDeltaPolicy.scaleCurrentDelta(
+          deltas['libido_self_delta'] as double, intensity, sensitivity);
+      final as_ = EmotionDeltaPolicy.scaleCurrentDelta(
+          deltas['aggression_self_delta'] as double, intensity, sensitivity);
 
       state.currentLibidoOther =
           (state.currentLibidoOther + lo).clamp(0.0, 50.0);
@@ -255,16 +235,32 @@ class AffectionManager {
           (state.currentAggressionSelf + as_).clamp(0.0, 50.0);
 
       state.baseLibidoOther = (state.baseLibidoOther +
-              (deltas['base_libido_other_delta'] as double) * sensitivity)
+              EmotionDeltaPolicy.scaleBaseDelta(
+                  deltas['base_libido_other_delta'] as double,
+                  intensity,
+                  sensitivity,
+                  state.turnCount <= 10 ? 1.5 : 0.2))
           .clamp(0.0, 50.0);
       state.baseAggressionOther = (state.baseAggressionOther +
-              (deltas['base_aggression_other_delta'] as double) * sensitivity)
+              EmotionDeltaPolicy.scaleBaseDelta(
+                  deltas['base_aggression_other_delta'] as double,
+                  intensity,
+                  sensitivity,
+                  state.turnCount <= 10 ? 1.5 : 0.2))
           .clamp(0.0, 50.0);
       state.baseLibidoSelf = (state.baseLibidoSelf +
-              (deltas['base_libido_self_delta'] as double) * sensitivity)
+              EmotionDeltaPolicy.scaleBaseDelta(
+                  deltas['base_libido_self_delta'] as double,
+                  intensity,
+                  sensitivity,
+                  0.2))
           .clamp(0.0, 50.0);
       state.baseAggressionSelf = (state.baseAggressionSelf +
-              (deltas['base_aggression_self_delta'] as double) * sensitivity)
+              EmotionDeltaPolicy.scaleBaseDelta(
+                  deltas['base_aggression_self_delta'] as double,
+                  intensity,
+                  sensitivity,
+                  0.2))
           .clamp(0.0, 50.0);
 
       state.turnCount++;
@@ -290,7 +286,8 @@ class AffectionManager {
 
       // Flush persona affection for new format
       if (isNewFormat && persona != null) {
-        persona.affection = affection;
+        if (isRequestCurrent != null && !isRequestCurrent()) return;
+        persona.affection = state.affection;
         await DatabaseService.updateAIPersona(persona);
       }
     } catch (e) {
