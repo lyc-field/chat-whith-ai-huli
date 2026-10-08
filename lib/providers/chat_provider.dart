@@ -11,6 +11,10 @@ import '../services/emotion_service.dart';
 import '../services/context_builder.dart';
 import '../services/knowledge_base.dart';
 import '../services/affection_manager.dart';
+import '../services/emotion_state_repository.dart';
+import '../services/request_guard.dart';
+import '../services/chat_request_service.dart';
+import '../services/chat_memory_service.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
@@ -37,6 +41,7 @@ class ChatProvider extends ChangeNotifier {
   DeepSeekService? _service; // chat model
   String _providerType = 'deepseek';
   final AffectionManager _affm = AffectionManager();
+  final RequestGuard _requestGuard = RequestGuard();
   bool _affectionEnabled = true;
   String? _currentConvId;
   String? _systemPrompt;
@@ -72,6 +77,7 @@ class ChatProvider extends ChangeNotifier {
   int _recallCount = 0;
   Map<String, String> _emotionTemplateLibrary = {};
   String? _emotionTemplateSignature;
+
 
   List<Message> get messages => _messages;
   List<SegmentSummary> get segments => _segments;
@@ -114,11 +120,32 @@ class ChatProvider extends ChangeNotifier {
 
   ChatProvider(this._convProvider, [this._personaProvider]);
 
+  RequestToken _beginRequest() {
+    final token = _requestGuard.begin(
+      conversationId: _currentConvId,
+      personaId: currentPersonaId,
+    );
+    return token;
+  }
+
+  bool _isRequestCurrent(RequestToken token) {
+    return _requestGuard.isCurrent(
+      token,
+      conversationId: _currentConvId,
+      personaId: currentPersonaId,
+    );
+  }
+
+  void _invalidateRequests() {
+    _requestGuard.invalidate();
+  }
+
   /// Sync current persona's affection and emotion state via AffectionManager.
-  Future<void> syncPersonaState() async {
+  Future<void> syncPersonaState({RequestToken? requestToken}) async {
     if (!isNewFormat || _currentConvId == null) return;
     final cp = _personaProvider!.currentPersona!;
     await _affm.syncWithPersona(_currentConvId!, cp);
+    if (requestToken != null && !_isRequestCurrent(requestToken)) return;
     notifyListeners();
   }
 
@@ -248,12 +275,18 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> loadConversation(String convId) async {
+    _invalidateRequests();
+    final loadToken = _requestGuard.begin(conversationId: convId);
     _currentConvId = convId;
     _personaProvider?.prepareForConversation(convId);
     _messages = await DatabaseService.getMessages(convId);
+    if (!_isRequestCurrent(loadToken)) return;
     _segments = await DatabaseService.getSegmentSummaries(convId);
+    if (!_isRequestCurrent(loadToken)) return;
     await _loadRecallCount();
+    if (!_isRequestCurrent(loadToken)) return;
     final conv = await DatabaseService.getConversation(convId);
+    if (!_isRequestCurrent(loadToken)) return;
     _systemPrompt = conv.systemPrompt;
     _userPersona = conv.userPersona;
     _worldBackground = conv.worldBackground;
@@ -269,23 +302,24 @@ class ChatProvider extends ChangeNotifier {
     _affm.roundCount =
         _messages.where((m) => m.role == 'user' && m.content.isNotEmpty).length;
     await (_personaProvider?.loadPersonas(convId) ?? Future.value());
+    if (!_isRequestCurrent(loadToken)) return;
 
     if (isNewFormat) {
       // New format: persona-level emotion state
-      await syncPersonaState();
+      await syncPersonaState(requestToken: loadToken);
+      if (!_isRequestCurrent(loadToken)) return;
     } else {
       // Old format: conversation-level emotion state
-      _affm.emotionState = await DatabaseService.getEmotionState(convId);
-      if (_affm.emotionState == null) {
-        _affm.emotionState = EmotionState.createDefault(convId,
-            initialAffection: conv.affection.toDouble());
-        await DatabaseService.insertEmotionState(_affm.emotionState!);
-      }
+      _affm.emotionState = await EmotionStateRepository.ensureForConversation(
+        convId,
+        initialAffection: conv.affection.toDouble(),
+      );
       _affm.affection = _affm.emotionState!.affection;
       _affm.previousRawAffection = _affm.emotionState!.affection;
     } // end old-format else
 
     await _loadEmotionTemplateLibrary();
+    if (!_isRequestCurrent(loadToken)) return;
 
     notifyListeners();
   }
@@ -305,9 +339,9 @@ class ChatProvider extends ChangeNotifier {
       isNewFormat: isNewFormat,
       personaId: personaId,
     )) {
-      await DatabaseService.insertPersonaEmotionState(state);
+      await EmotionStateRepository.insert(state);
     } else {
-      await DatabaseService.insertEmotionState(state);
+      await EmotionStateRepository.insert(state);
     }
   }
 
@@ -334,6 +368,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   void newConversation() {
+    _invalidateRequests();
     _currentConvId = null;
     _personaProvider?.prepareForConversation('');
     _messages = [];
@@ -525,7 +560,14 @@ class ChatProvider extends ChangeNotifier {
     // Create emotion state (mirrors sendMessage's new-conversation block)
     _affm.emotionState = EmotionState.createDefault(_currentConvId!,
         initialAffection: _affm.affection);
-    await DatabaseService.insertEmotionState(_affm.emotionState!);
+    if (isNewFormat && currentPersonaId != null) {
+      _affm.emotionState = EmotionState.createDefault(
+        _currentConvId!,
+        initialAffection: _affm.affection,
+        personaId: currentPersonaId,
+      );
+    }
+    await EmotionStateRepository.insert(_affm.emotionState!);
 
     // Insert opening line as first message
     final openingMsg = Message(
@@ -608,10 +650,12 @@ class ChatProvider extends ChangeNotifier {
     await DatabaseService.deleteMessage(removed.id);
 
     // Stream a new AI reply (appended at end; context includes all remaining messages)
-    await _processAndStreamReply(userText);
+    final requestToken = _beginRequest();
+    await _processAndStreamReply(userText, requestToken: requestToken);
   }
 
   Future<void> resetConversation() async {
+    _invalidateRequests();
     if (_currentConvId == null) {
       _messages = [];
       _segments = [];
@@ -684,7 +728,9 @@ class ChatProvider extends ChangeNotifier {
     required double temperature,
     int? maxTokens,
     int? maxCharsForDisplay,
+    required RequestToken requestToken,
   }) async {
+    if (!_isRequestCurrent(requestToken)) return null;
     final hasPendingBubble = _messages.isNotEmpty &&
         _messages.last.role == 'assistant' &&
         _messages.last.content.isEmpty;
@@ -713,6 +759,7 @@ class ChatProvider extends ChangeNotifier {
           }
         },
         onToken: (token) {
+          if (!_isRequestCurrent(requestToken)) return;
           _streamingContent += token;
           var display = _streamingContent;
           final deltaMatch =
@@ -723,8 +770,9 @@ class ChatProvider extends ChangeNotifier {
           if (maxCharsForDisplay != null && maxCharsForDisplay > 0) {
             display = _truncateByChars(display, maxCharsForDisplay);
           }
-          _messages[_messages.length - 1] =
-              assistantMsg.copyWith(content: display);
+          final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+          if (index == -1) return;
+          _messages[index] = assistantMsg.copyWith(content: display);
           notifyListeners();
         },
         onDone: () => _streamingContent = '',
@@ -732,19 +780,24 @@ class ChatProvider extends ChangeNotifier {
 
       final fallbackTotal =
           DeepSeekService.estimateTotalTokens(contextMsgs, fullContent);
+      if (!_isRequestCurrent(requestToken)) {
+        return null;
+      }
       final savedMsg = assistantMsg.copyWith(
         content: fullContent,
         totalTokens: totalTokensUsed ?? fallbackTotal,
       );
-      _messages[_messages.length - 1] = savedMsg;
+      final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+      if (index == -1) return null;
+      _messages[index] = savedMsg;
       await DatabaseService.insertMessage(savedMsg);
       return fullContent;
     } catch (e) {
+      if (!_isRequestCurrent(requestToken)) return null;
       _error = '请求失败: $e';
-      if (_messages.isNotEmpty &&
-          _messages.last.role == 'assistant' &&
-          _messages.last.content.isEmpty) {
-        _messages.removeLast();
+      final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+      if (index != -1 && _messages[index].content.isEmpty) {
+        _messages.removeAt(index);
       }
       return null;
     }
@@ -754,15 +807,20 @@ class ChatProvider extends ChangeNotifier {
   /// post-process (delta / affection / quick-reply / archive / emotion).
   /// Does NOT insert a user message — the caller must ensure _messages
   /// already ends with the triggering user message.
-  Future<void> _processAndStreamReply(String userText) async {
+  Future<void> _processAndStreamReply(
+    String userText, {
+    required RequestToken requestToken,
+  }) async {
+    if (!_isRequestCurrent(requestToken)) return;
     _error = null;
 
     if (_shouldRefuseNonEroticRequest(userText)) {
-      await _appendImmediateNonEroticRefusal();
+      await _appendImmediateNonEroticRefusal(requestToken: requestToken);
       return;
     }
 
     final conv = await DatabaseService.getConversation(_currentConvId!);
+    if (!_isRequestCurrent(requestToken)) return;
     final safeMode = await AuthService.getAdminSafeMode();
     final doAffectionJudge =
         _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
@@ -794,6 +852,7 @@ class ChatProvider extends ChangeNotifier {
       injectRoleplayRule:
           ContextBuilder.shouldInjectRoleplayRule(userMessageCount),
     );
+    if (!_isRequestCurrent(requestToken)) return;
 
     // Output length limits
     final minChars = await AuthService.getMinOutputChars();
@@ -804,48 +863,28 @@ class ChatProvider extends ChangeNotifier {
         DeepSeekService.charsToMaxTokens(maxChars),
       );
     }
-    if (minChars > 0) {
-      int insertAt = contextMsgs.length;
-      for (int i = 0; i < contextMsgs.length; i++) {
-        final role = contextMsgs[i]['role'] as String?;
-        if (role == 'user' || role == 'assistant') {
-          insertAt = i;
-          break;
-        }
-      }
-      contextMsgs.insert(insertAt, {
-        'role': 'system',
-        'content': '请严格遵守输出长度要求：回复不少于$minChars个汉字。若内容不足请继续补充，不要提前结束。',
-      });
-    }
-    if (maxChars > 0) {
-      int insertAt = contextMsgs.length;
-      for (int i = 0; i < contextMsgs.length; i++) {
-        final role = contextMsgs[i]['role'] as String?;
-        if (role == 'user' || role == 'assistant') {
-          insertAt = i;
-          break;
-        }
-      }
-      contextMsgs.insert(insertAt, {
-        'role': 'system',
-        'content': '请严格遵守输出长度要求：回复最多$maxChars个字符，禁止超出。',
-      });
-    }
+    ChatRequestService.addLengthDirectives(
+      contextMsgs,
+      minChars: minChars,
+      maxChars: maxChars,
+    );
 
-    final temp =
-        _affectionEnabled ? 0.5 + (_affm.affection + 15) / 115 * 1.3 : 1.5;
+    final temp = ChatRequestService.temperature(
+      affectionEnabled: _affectionEnabled,
+      affection: _affm.affection,
+    );
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokens,
       maxCharsForDisplay: maxChars > 0 ? maxChars : null,
+      requestToken: requestToken,
     );
 
     double? inlineDelta;
     String? inlineReason;
 
-    if (fullContent != null) {
+    if (fullContent != null && _isRequestCurrent(requestToken)) {
       final parsed = AffectionManager.parseDeltaTag(fullContent);
       var cleanContent = parsed.cleanContent;
       inlineDelta = parsed.delta;
@@ -873,6 +912,7 @@ class ChatProvider extends ChangeNotifier {
         minChars: minChars,
         maxChars: maxChars,
         temperature: temp,
+        requestToken: requestToken,
       );
 
       var extracted = _extractQuickReplies(cleanContent);
@@ -888,6 +928,7 @@ class ChatProvider extends ChangeNotifier {
           maxChars: maxChars,
           temperature: temp,
           disallowQuickReply: true,
+          requestToken: requestToken,
         );
         extracted = _extractQuickReplies(cleanContent);
         cleanContent = extracted.content;
@@ -940,6 +981,7 @@ class ChatProvider extends ChangeNotifier {
       }
     }
 
+    if (!_isRequestCurrent(requestToken)) return;
     _isPending = false;
     _streamingContent = '';
 
@@ -955,8 +997,10 @@ class ChatProvider extends ChangeNotifier {
           _affm.analyzer != null &&
           _affm.emotionState != null &&
           !safeMode) {
-        Future.delayed(const Duration(milliseconds: 300),
-            () => _doEmotionAnalysis(userText));
+        Future.delayed(
+          const Duration(milliseconds: 300),
+          () => _doEmotionAnalysis(userText, requestToken: requestToken),
+        );
       }
     }
   }
@@ -976,6 +1020,7 @@ class ChatProvider extends ChangeNotifier {
     }
 
     _error = null;
+    final requestToken = _beginRequest();
 
     if (_currentConvId == null) {
       final conv = await _convProvider.createConversation(
@@ -1012,7 +1057,9 @@ class ChatProvider extends ChangeNotifier {
         }
       }
       await _createInitialEmotionState();
+      if (!_isRequestCurrent(requestToken)) return;
       await _generateEmotionTemplateLibraryIfNeeded(force: true);
+      if (!_isRequestCurrent(requestToken)) return;
 
       // Save openingLine to conversation
       if (_openingLine != null && _openingLine!.isNotEmpty) {
@@ -1046,13 +1093,14 @@ class ChatProvider extends ChangeNotifier {
     );
     _messages.add(userMsg);
     await DatabaseService.insertMessage(userMsg);
+    if (!_isRequestCurrent(requestToken)) return;
     _isPending = true;
     _streamingContent = '';
     _ensureAssistantPendingBubble();
 
     if (_shouldRefuseNonEroticRequest(text.trim())) {
       _affm.roundCount++;
-      await _appendImmediateNonEroticRefusal();
+      await _appendImmediateNonEroticRefusal(requestToken: requestToken);
       return;
     }
 
@@ -1065,7 +1113,7 @@ class ChatProvider extends ChangeNotifier {
 
     // Increment round count, then delegate to shared reply pipeline
     _affm.roundCount++;
-    await _processAndStreamReply(text.trim());
+    await _processAndStreamReply(text.trim(), requestToken: requestToken);
   }
 
   /// Parse quick-reply block from AI response.
@@ -1399,8 +1447,11 @@ JSON 示例：
         '我们可以换个方向：比如聊日常心情、关系推进或正常剧情发展。';
   }
 
-  Future<void> _appendImmediateNonEroticRefusal() async {
+  Future<void> _appendImmediateNonEroticRefusal({
+    RequestToken? requestToken,
+  }) async {
     if (_currentConvId == null) return;
+    if (requestToken != null && !_isRequestCurrent(requestToken)) return;
 
     final assistantMsg = Message(
       conversationId: _currentConvId!,
@@ -1418,6 +1469,7 @@ JSON 示例：
     }
 
     final conv = await DatabaseService.getConversation(_currentConvId!);
+    if (requestToken != null && !_isRequestCurrent(requestToken)) return;
     await DatabaseService.updateConversation(
         conv.copyWith(updatedAt: DateTime.now()));
 
@@ -1455,9 +1507,14 @@ JSON 示例：
     required int minChars,
     required int maxChars,
     required double temperature,
+    required RequestToken requestToken,
     bool disallowQuickReply = false,
   }) async {
-    if (minChars <= 0 || _service == null) return currentContent;
+    if (minChars <= 0 ||
+        _service == null ||
+        !_isRequestCurrent(requestToken)) {
+      return currentContent;
+    }
     if (_messages.isEmpty || _messages.last.role != 'assistant') {
       return currentContent;
     }
@@ -1494,6 +1551,7 @@ JSON 示例：
           if (t != null && t > 0) usageTotal = t;
         },
         onToken: (token) {
+          if (!_isRequestCurrent(requestToken)) return;
           content += token;
           if (maxChars > 0) {
             content = _truncateByChars(content, maxChars);
@@ -1505,7 +1563,7 @@ JSON 示例：
         onDone: () => _streamingContent = '',
       );
 
-      if (appended.trim().isEmpty) break;
+      if (!_isRequestCurrent(requestToken) || appended.trim().isEmpty) break;
       final estimatedUsage =
           DeepSeekService.estimateTotalTokens(fillContext, appended);
       final deltaTokens = usageTotal ?? estimatedUsage;
@@ -1524,8 +1582,15 @@ JSON 示例：
 
   /// Unified emotion analysis via unconscious LLM.
   /// Delegates to AffectionManager for all emotion/affection state updates.
-  Future<void> _doEmotionAnalysis(String userMessage) async {
-    if (_currentConvId == null || !_affectionEnabled) return;
+  Future<void> _doEmotionAnalysis(
+    String userMessage, {
+    required RequestToken requestToken,
+  }) async {
+    if (!_isRequestCurrent(requestToken) ||
+        _currentConvId == null ||
+        !_affectionEnabled) {
+      return;
+    }
 
     final allMsgs = _messages.where((m) => m.content.isNotEmpty).toList();
     final aiMsgs = allMsgs.where((m) => m.role == 'assistant').toList();
@@ -1544,8 +1609,10 @@ JSON 示例：
       sensitivity: boostedSensitivity,
       isNewFormat: isNewFormat,
       persona: isNewFormat ? _personaProvider?.currentPersona : null,
+      isRequestCurrent: () => _isRequestCurrent(requestToken),
     );
 
+    if (!_isRequestCurrent(requestToken)) return;
     notifyListeners();
   }
 
@@ -1566,6 +1633,7 @@ JSON 示例：
         _isContinuing ||
         _service == null ||
         _currentConvId == null) return;
+    final requestToken = _beginRequest();
     _isContinuing = true;
     _isPending = true;
     _streamingContent = '';
@@ -1573,6 +1641,7 @@ JSON 示例：
 
     // Build context via shared ContextBuilder (no Δ tag, inject continue)
     final conv = await DatabaseService.getConversation(_currentConvId!);
+    if (!_isRequestCurrent(requestToken)) return;
     final lastAi = _messages
         .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
         .lastOrNull;
@@ -1597,6 +1666,7 @@ JSON 示例：
       kbResults: kbResults,
       injectContinue: true,
     );
+    if (!_isRequestCurrent(requestToken)) return;
 
     // Output length limits
     final minCharsCont = await AuthService.getMinOutputChars();
@@ -1607,46 +1677,25 @@ JSON 示例：
         DeepSeekService.charsToMaxTokens(maxCharsCont),
       );
     }
-    if (minCharsCont > 0) {
-      int insertAt = contextMsgs.length;
-      for (int i = 0; i < contextMsgs.length; i++) {
-        final role = contextMsgs[i]['role'] as String?;
-        if (role == 'user' || role == 'assistant') {
-          insertAt = i;
-          break;
-        }
-      }
-      contextMsgs.insert(insertAt, {
-        'role': 'system',
-        'content': '请严格遵守输出长度要求：回复不少于$minCharsCont个汉字。若内容不足请继续补充，不要提前结束。',
-      });
-    }
-    if (maxCharsCont > 0) {
-      int insertAt = contextMsgs.length;
-      for (int i = 0; i < contextMsgs.length; i++) {
-        final role = contextMsgs[i]['role'] as String?;
-        if (role == 'user' || role == 'assistant') {
-          insertAt = i;
-          break;
-        }
-      }
-      contextMsgs.insert(insertAt, {
-        'role': 'system',
-        'content': '请严格遵守输出长度要求：回复最多$maxCharsCont个字符，禁止超出。',
-      });
-    }
+    ChatRequestService.addLengthDirectives(
+      contextMsgs,
+      minChars: minCharsCont,
+      maxChars: maxCharsCont,
+    );
 
-    final temp = _affectionEnabled
-        ? 0.5 + (_affm.affection.round() + 15) / 115 * 1.3
-        : 1.5;
+    final temp = ChatRequestService.temperature(
+      affectionEnabled: _affectionEnabled,
+      affection: _affm.affection.round().toDouble(),
+    );
     final fullContent = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokensCont,
       maxCharsForDisplay: maxCharsCont > 0 ? maxCharsCont : null,
+      requestToken: requestToken,
     );
 
-    if (fullContent != null) {
+    if (fullContent != null && _isRequestCurrent(requestToken)) {
       if (maxCharsCont > 0) {
         final trimmed = _truncateByChars(fullContent, maxCharsCont);
         if (trimmed != fullContent &&
@@ -1665,6 +1714,7 @@ JSON 示例：
           minChars: minCharsCont,
           maxChars: maxCharsCont,
           temperature: temp,
+          requestToken: requestToken,
         );
 
         if (!_eroticMode) {
@@ -1682,6 +1732,7 @@ JSON 示例：
       await DatabaseService.updateConversation(updatedConv);
     }
 
+    if (!_isRequestCurrent(requestToken)) return;
     _isPending = false;
     _streamingContent = '';
     _isContinuing = false;
@@ -1692,12 +1743,10 @@ JSON 示例：
   Future<void> _maybeArchiveSegment() async {
     if (_currentConvId == null) return;
 
-    final unarchived = <Message>[];
-    for (final m in _messages) {
-      if (m.content.isNotEmpty && m.segmentIndex == null) {
-        unarchived.add(m);
-      }
-    }
+    final unarchived = ChatMemoryService.selectArchive(
+      _messages,
+      count: _messages.length,
+    );
 
     if (unarchived.length < triggerArchiveAt) return;
 
@@ -1732,9 +1781,7 @@ JSON 示例：
     // Always generate AI summary with persona (diary-style), regardless of auto/manual.
     if (_service != null) {
       try {
-        final archiveText = toArchive
-            .map((m) => '${m.role == 'user' ? '用户' : 'AI'}: ${m.content}')
-            .join('\n');
+        final archiveText = ChatMemoryService.formatArchiveText(toArchive);
 
         // Build in-character diary-style summary prompt using persona
         final persona =

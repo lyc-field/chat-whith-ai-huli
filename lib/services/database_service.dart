@@ -717,6 +717,12 @@ class DatabaseService {
         whereArgs: [conversationId, personaId]);
   }
 
+  static Future<void> deletePersonaEmotionStates(String conversationId) async {
+    final db = await database;
+    await db.delete('persona_emotion_states',
+        where: 'conversation_id = ?', whereArgs: [conversationId]);
+  }
+
   static Future<void> deleteEmotionState(String conversationId,
       {String? personaId}) async {
     final db = await database;

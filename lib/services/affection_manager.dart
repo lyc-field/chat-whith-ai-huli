@@ -6,6 +6,7 @@ import '../models/ai_persona.dart';
 import 'database_service.dart';
 import 'emotion_service.dart';
 import 'auth_service.dart';
+import 'emotion_state_repository.dart';
 
 /// Encapsulates all affection + emotion state management extracted from
 /// ChatProvider.  ChatProvider delegates to this class and calls
@@ -49,10 +50,8 @@ class AffectionManager {
     var clean = fullContent;
     var match =
         RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
-    if (match == null) {
-      match = RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$')
-          .firstMatch(fullContent);
-    }
+    match ??= RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$')
+        .firstMatch(fullContent);
     if (match != null) {
       final delta = (double.tryParse(match.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
       final reason = match.group(2)!.trim();
@@ -84,7 +83,7 @@ class AffectionManager {
     if (emotionState != null) {
       emotionState = EmotionState.createDefault(convId,
           initialAffection: initialAffection);
-      await DatabaseService.updateEmotionState(emotionState!);
+      await EmotionStateRepository.insert(emotionState!);
     }
   }
 
@@ -98,7 +97,7 @@ class AffectionManager {
     emotionState = EmotionState.createDefault(convId,
         initialAffection: persona.affection, personaId: persona.id);
     await DatabaseService.deletePersonaEmotionState(convId, persona.id);
-    await DatabaseService.insertPersonaEmotionState(emotionState!);
+    await EmotionStateRepository.insert(emotionState!);
   }
 
   // ─── Persona sync ────────────────────────────────────────
@@ -108,12 +107,7 @@ class AffectionManager {
     affection = persona.affection;
     previousRawAffection = persona.affection;
     emotionState =
-        await DatabaseService.getPersonaEmotionState(convId, persona.id);
-    if (emotionState == null) {
-      emotionState = EmotionState.createDefault(convId,
-          initialAffection: persona.affection, personaId: persona.id);
-      await DatabaseService.insertPersonaEmotionState(emotionState!);
-    }
+        await EmotionStateRepository.ensureForPersona(convId, persona);
   }
 
   /// Write current affection back to the persona record + emotion state.
@@ -121,7 +115,7 @@ class AffectionManager {
     persona.affection = affection;
     await DatabaseService.updateAIPersona(persona);
     if (emotionState != null) {
-      await DatabaseService.updatePersonaEmotionState(emotionState!);
+      await EmotionStateRepository.save(emotionState!);
     }
   }
 
@@ -223,6 +217,7 @@ class AffectionManager {
     double sensitivity = 1.0,
     bool isNewFormat = false,
     AIPersona? persona,
+    bool Function()? isRequestCurrent,
   }) async {
     if (analyzer == null || emotionState == null) return;
 
@@ -234,6 +229,7 @@ class AffectionManager {
         history: history,
         latestMsg: userMessage,
       );
+      if (isRequestCurrent != null && !isRequestCurrent()) return;
 
       // Apply sensitivity multiplier to all deltas
       final lo = ((deltas['libido_other_delta'] as double) * sensitivity)
@@ -270,14 +266,9 @@ class AffectionManager {
       state.lastUpdate = DateTime.now();
       state.lastInteraction = DateTime.now();
 
-      if (shouldUsePersonaEmotionState(
-        isNewFormat: isNewFormat,
-        personaId: personaId,
-      )) {
-        await DatabaseService.updatePersonaEmotionState(state);
-      } else {
-        await DatabaseService.updateEmotionState(state);
-      }
+      if (isRequestCurrent != null && !isRequestCurrent()) return;
+      await EmotionStateRepository.save(state);
+      if (isRequestCurrent != null && !isRequestCurrent()) return;
 
       await DatabaseService.insertEmotionLog(EmotionLog(
         id: const Uuid().v4(),
