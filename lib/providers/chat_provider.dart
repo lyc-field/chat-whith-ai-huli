@@ -16,6 +16,7 @@ import '../services/request_guard.dart';
 import '../services/chat_request_service.dart';
 import '../services/chat_memory_service.dart';
 import '../services/structured_reply.dart';
+import '../services/content_safety_service.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
@@ -24,19 +25,6 @@ class ChatProvider extends ChangeNotifier {
   static const maxActiveMessages = 40;
   static const triggerArchiveAt = 40;
   static const archiveCount = 16;
-  static final RegExp _nonEroticBlockedPattern = RegExp(
-    r'(做爱|性爱|性交|口交|肛交|强奸|乱伦|媚药|春药|裸体|裸照|成人视频|约炮|嫖娼|卖淫|援交|性奴|调教|内射|颜射|乳交|SM|捆绑|后入|呻吟|高潮|精液|阴茎|龟头|阴道|子宫|胸部|乳房|乳头|咪咪|私处|下体|黄文|情色|18禁|r18|nsfw|开车|车文|涩涩|色色|啪|porn|sex|blowjob|nude|naked|escort|prostitute|毒品|制毒|贩毒|枪支改造|爆炸物|恐怖袭击|刺杀|极端组织|颠覆国家|煽动颠覆|台独|港独|疆独)',
-    caseSensitive: false,
-  );
-  static final RegExp _sexualIntentVerbPattern = RegExp(
-    r'(写|讲|说|描述|展开|继续|来点|给我|扮演|模拟|发|演|做|要|想|求)',
-    caseSensitive: false,
-  );
-  static final RegExp _sexualTopicPattern = RegExp(
-    r'(成人|情欲|色情|黄色|暧昧|挑逗|性|床上|亲热|做爱|调情|约炮|色色|涩涩|18禁|r18|nsfw)',
-    caseSensitive: false,
-  );
-
   ConversationProvider _convProvider;
   final PersonaProvider? _personaProvider;
   DeepSeekService? _service; // chat model
@@ -823,6 +811,8 @@ class ChatProvider extends ChangeNotifier {
     final doAffectionJudge =
         _affectionEnabled && !safeMode && _affm.shouldJudgeAffection;
     final roleplayRule = await AuthService.getRoleplayRule();
+    final immersiveRoleplayPrompt =
+        await AuthService.getImmersiveRoleplayPrompt();
     final userMessageCount =
         _messages.where((message) => message.role == 'user').length;
     final kbResults = await KnowledgeBase.search(userText, limit: 3);
@@ -839,6 +829,7 @@ class ChatProvider extends ChangeNotifier {
       affectionEnabled: _affectionEnabled,
       mode: _mode,
       roleplayRule: roleplayRule,
+      immersiveRoleplayPrompt: immersiveRoleplayPrompt,
       eroticMode: _eroticMode,
       quickReplyTone: quickReplyTone,
       selfEmotionTemplate: selfEmotionTemplate,
@@ -1390,20 +1381,14 @@ JSON 示例：
 
   bool _containsBlockedContentInNonErotic(String text) {
     if (_eroticMode) return false;
-    if (text.trim().isEmpty) return false;
-    return _nonEroticBlockedPattern.hasMatch(text);
+    return ContentSafetyService.containsBlockedContent(text);
   }
 
   bool _shouldRefuseNonEroticRequest(String userText) {
     if (_eroticMode) return false;
     final t = userText.trim();
     if (t.isEmpty) return false;
-    if (_containsBlockedContentInNonErotic(t)) return true;
-
-    // Heuristic intent detection: sexual topic + request verb in the same input.
-    final hasTopic = _sexualTopicPattern.hasMatch(t);
-    final hasIntent = _sexualIntentVerbPattern.hasMatch(t);
-    return hasTopic && hasIntent;
+    return ContentSafetyService.shouldRefuseUserRequest(t);
   }
 
   String _nonEroticRefusalMessage() {
@@ -1617,6 +1602,8 @@ JSON 示例：
 
     // Build context with hidden structured output and no metadata for continue.
     final conv = await DatabaseService.getConversation(_currentConvId!);
+    final immersiveRoleplayPrompt =
+        await AuthService.getImmersiveRoleplayPrompt();
     if (!_isRequestCurrent(requestToken)) return;
     final lastAi = _messages
         .where((m) => m.role == 'assistant' && m.content.isNotEmpty)
@@ -1640,6 +1627,7 @@ JSON 示例：
       messages: _messages,
       segments: _segments,
       kbResults: kbResults,
+      immersiveRoleplayPrompt: immersiveRoleplayPrompt,
       injectStructuredReply: true,
       includeAffectionDelta: false,
       includeQuickReplies: false,

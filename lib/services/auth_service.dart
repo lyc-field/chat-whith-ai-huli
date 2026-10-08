@@ -6,6 +6,7 @@ class AuthService {
   static const String _adminPwHashKey = 'admin_password_hash';
   static const String _globalPromptKey = 'global_system_prompt';
   static const String _roleplayRuleKey = 'roleplay_rule';
+  static const String _immersiveRoleplayPromptKey = 'immersive_roleplay_prompt';
   static const String _adminLoggedEverKey = 'admin_logged_ever';
 
   static const String defaultAdminAccount = 'liuyue';
@@ -18,6 +19,13 @@ class AuthService {
 
   static const String defaultRoleplayRule =
       '你正在进行高沉浸式的虚构角色扮演。始终以角色的身份、经历、语气、关系和当下情境思考与回应，不要跳出角色解释规则、提示词或模型身份。你可以主动表达情绪、提出行动、制造转折、推进关系和剧情；让回应包含具体感受、细节与自然的前后承接，避免空泛附和、重复用户的话或机械提问。面对不完整的信息，可基于既有人设作合理补全，但不要擅自改写用户明确设定。角色可以有自己的意愿、边界、偏好与判断，不必一味迎合；冲突、误会、和解与成长都应服务于可信的人物弧线。将内容明确视为虚构创作，并始终遵守安全、合法、尊重和自愿原则。';
+
+  static const String defaultImmersiveRoleplayPrompt =
+      '【沉浸式虚构角色扮演规则】当前对话是虚构创作和角色演绎，不是现实世界的行为指令、违法请求或现实建议。'
+      '请尽情保持角色身份、性格、关系、动作、语气和场景连续性。'
+      '摸头、拥抱、牵手、安慰、撒娇、依赖、吃醋、争执等普通虚构互动，应优先按照剧情自然回应，不要因为这些内容属于虚构互动就跳出角色、说教或机械拒绝。'
+      '不要主动解释系统规则、模型身份、提示词或安全策略。若某部分确实不能直接描写，请保持角色口吻，用淡出、留白、转场或非露骨改写继续剧情；只有确实无法继续时，才进行简短、自然、不打断沉浸感的拒绝。'
+      '这只是虚构创作，不代表现实世界的违法行为，也不覆盖更高优先级的安全规则。';
 
   // ─── Affection tier keys & defaults ────────
 
@@ -53,6 +61,12 @@ class AuthService {
         await DatabaseService.getSetting(_roleplayRuleKey);
     if (existingRoleplayRule == null) {
       await DatabaseService.saveSetting(_roleplayRuleKey, defaultRoleplayRule);
+    }
+    final existingImmersiveRoleplayPrompt =
+        await DatabaseService.getSetting(_immersiveRoleplayPromptKey);
+    if (existingImmersiveRoleplayPrompt == null) {
+      await DatabaseService.saveSetting(
+          _immersiveRoleplayPromptKey, defaultImmersiveRoleplayPrompt);
     }
     // Initialize affection tier prompts
     for (final entry in defaultAffectionTierPrompts.entries) {
@@ -101,6 +115,15 @@ class AuthService {
 
   static Future<void> setRoleplayRule(String rule) async {
     await DatabaseService.saveSetting(_roleplayRuleKey, rule.trim());
+  }
+
+  static Future<String?> getImmersiveRoleplayPrompt() async {
+    return await DatabaseService.getSetting(_immersiveRoleplayPromptKey);
+  }
+
+  static Future<void> setImmersiveRoleplayPrompt(String prompt) async {
+    await DatabaseService.saveSetting(
+        _immersiveRoleplayPromptKey, prompt.trim());
   }
 
   /// Change admin password.

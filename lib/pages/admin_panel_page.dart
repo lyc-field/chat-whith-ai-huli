@@ -17,6 +17,7 @@ class AdminPanelPage extends StatefulWidget {
 class _AdminPanelPageState extends State<AdminPanelPage> {
   final _promptController = TextEditingController();
   final _roleplayRuleController = TextEditingController();
+  final _immersiveRoleplayController = TextEditingController();
   final _newPwController = TextEditingController();
   bool _loading = true;
   bool _adminSafeMode = false;
@@ -35,6 +36,10 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
     final roleplayRule = await AuthService.getRoleplayRule();
     _roleplayRuleController.text =
         roleplayRule ?? AuthService.defaultRoleplayRule;
+    final immersiveRoleplayPrompt =
+        await AuthService.getImmersiveRoleplayPrompt();
+    _immersiveRoleplayController.text = immersiveRoleplayPrompt ??
+        AuthService.defaultImmersiveRoleplayPrompt;
     final safeMode = await AuthService.getAdminSafeMode();
 
     _conversations = await DatabaseService.getConversations();
@@ -54,6 +59,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   void dispose() {
     _promptController.dispose();
     _roleplayRuleController.dispose();
+    _immersiveRoleplayController.dispose();
     _newPwController.dispose();
     super.dispose();
   }
@@ -61,6 +67,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
   Future<void> _savePrompt() async {
     await AuthService.setGlobalPrompt(_promptController.text);
     await AuthService.setRoleplayRule(_roleplayRuleController.text);
+    await AuthService.setImmersiveRoleplayPrompt(
+        _immersiveRoleplayController.text);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -570,13 +578,30 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                           border: OutlineInputBorder(),
                         ),
                       );
+                      final immersiveRoleplayField = TextField(
+                        controller: _immersiveRoleplayController,
+                        maxLines: 8,
+                        minLines: 4,
+                        decoration: const InputDecoration(
+                          labelText: '沉浸演绎规则',
+                          helperText:
+                              '用于虚构角色扮演中的自然互动和减少误拒绝；不能覆盖更高优先级的安全规则。',
+                          border: OutlineInputBorder(),
+                        ),
+                      );
                       if (constraints.maxWidth >= 600) {
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        return Column(
                           children: [
-                            Expanded(child: globalPromptField),
-                            const SizedBox(width: 12),
-                            Expanded(child: roleplayRuleField),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: globalPromptField),
+                                const SizedBox(width: 12),
+                                Expanded(child: roleplayRuleField),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            immersiveRoleplayField,
                           ],
                         );
                       }
@@ -585,6 +610,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                           globalPromptField,
                           const SizedBox(height: 12),
                           roleplayRuleField,
+                          const SizedBox(height: 12),
+                          immersiveRoleplayField,
                         ],
                       );
                     },

@@ -24,6 +24,7 @@ class ContextBuilder {
     required bool affectionEnabled,
     required String mode,
     String? roleplayRule,
+    String? immersiveRoleplayPrompt,
     bool eroticMode = false,
     String quickReplyTone = '正常',
     String? selfEmotionTemplate,
@@ -67,6 +68,14 @@ class ContextBuilder {
         sb.writeln(globalPrompt.trim());
       }
       contextMsgs.add({'role': 'system', 'content': sb.toString()});
+    }
+
+    if (immersiveRoleplayPrompt != null &&
+        immersiveRoleplayPrompt.trim().isNotEmpty) {
+      contextMsgs.add({
+        'role': 'system',
+        'content': '【沉浸演绎说明】${immersiveRoleplayPrompt.trim()}',
+      });
     }
 
     if (eroticMode) {
