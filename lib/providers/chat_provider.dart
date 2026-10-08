@@ -15,6 +15,7 @@ import '../services/emotion_state_repository.dart';
 import '../services/request_guard.dart';
 import '../services/chat_request_service.dart';
 import '../services/chat_memory_service.dart';
+import '../services/structured_reply.dart';
 import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
@@ -723,7 +724,7 @@ class ChatProvider extends ChangeNotifier {
 
   /// Stream an assistant reply from the API, save to DB, and update in-memory display.
   /// Returns the raw full response content, or null on error (error already set on provider).
-  Future<String?> _streamAssistantReply({
+  Future<StreamedReply?> _streamAssistantReply({
     required List<Map<String, dynamic>> contextMsgs,
     required double temperature,
     int? maxTokens,
@@ -761,12 +762,8 @@ class ChatProvider extends ChangeNotifier {
         onToken: (token) {
           if (!_isRequestCurrent(requestToken)) return;
           _streamingContent += token;
-          var display = _streamingContent;
-          final deltaMatch =
-              RegExp(r'Δ\s*[+\-±]?\d*\.?\d*\s*[^\n]*$').firstMatch(display);
-          if (deltaMatch != null) {
-            display = display.substring(0, deltaMatch.start).trimRight();
-          }
+          var display =
+              StructuredReplyParser.visibleText(_streamingContent);
           if (maxCharsForDisplay != null && maxCharsForDisplay > 0) {
             display = _truncateByChars(display, maxCharsForDisplay);
           }
@@ -778,20 +775,21 @@ class ChatProvider extends ChangeNotifier {
         onDone: () => _streamingContent = '',
       );
 
-      final fallbackTotal =
-          DeepSeekService.estimateTotalTokens(contextMsgs, fullContent);
       if (!_isRequestCurrent(requestToken)) {
         return null;
       }
+      final parsed = StructuredReplyParser.parseAny(fullContent);
+      final fallbackTotal =
+          DeepSeekService.estimateTotalTokens(contextMsgs, fullContent);
       final savedMsg = assistantMsg.copyWith(
-        content: fullContent,
+        content: parsed.reply,
         totalTokens: totalTokensUsed ?? fallbackTotal,
       );
       final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
       if (index == -1) return null;
       _messages[index] = savedMsg;
       await DatabaseService.insertMessage(savedMsg);
-      return fullContent;
+      return StreamedReply(raw: fullContent, parsed: parsed);
     } catch (e) {
       if (!_isRequestCurrent(requestToken)) return null;
       _error = '请求失败: $e';
@@ -847,8 +845,9 @@ class ChatProvider extends ChangeNotifier {
       messages: _messages,
       segments: _segments,
       kbResults: kbResults,
-      injectDeltaTag: doAffectionJudge,
-      injectQuickReply: _affectionEnabled,
+      injectStructuredReply: true,
+      includeAffectionDelta: doAffectionJudge,
+      includeQuickReplies: _affectionEnabled,
       injectRoleplayRule:
           ContextBuilder.shouldInjectRoleplayRule(userMessageCount),
     );
@@ -873,7 +872,7 @@ class ChatProvider extends ChangeNotifier {
       affectionEnabled: _affectionEnabled,
       affection: _affm.affection,
     );
-    final fullContent = await _streamAssistantReply(
+    final streamed = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokens,
@@ -884,17 +883,11 @@ class ChatProvider extends ChangeNotifier {
     double? inlineDelta;
     String? inlineReason;
 
-    if (fullContent != null && _isRequestCurrent(requestToken)) {
-      final parsed = AffectionManager.parseDeltaTag(fullContent);
-      var cleanContent = parsed.cleanContent;
-      inlineDelta = parsed.delta;
-      inlineReason = parsed.reason;
-
-      if (cleanContent != fullContent) {
-        _messages[_messages.length - 1] =
-            _messages[_messages.length - 1].copyWith(content: cleanContent);
-        await DatabaseService.insertMessage(_messages[_messages.length - 1]);
-      }
+    if (streamed != null && _isRequestCurrent(requestToken)) {
+      var cleanContent = streamed.parsed.reply;
+      inlineDelta = doAffectionJudge ? streamed.parsed.affectionDelta : null;
+      inlineReason =
+          doAffectionJudge ? streamed.parsed.affectionReason : null;
 
       if (maxChars > 0) {
         final trimmed = _truncateByChars(cleanContent, maxChars);
@@ -915,11 +908,9 @@ class ChatProvider extends ChangeNotifier {
         requestToken: requestToken,
       );
 
-      var extracted = _extractQuickReplies(cleanContent);
-      cleanContent = extracted.content;
-      var finalQuickReplies = extracted.quickReplies;
+      var finalQuickReplies = streamed.parsed.quickReplies;
 
-      // Enforce minimum length on visible正文 (after removing [快捷回复] block).
+      // Enforce minimum length on visible正文.
       if (minChars > 0 && _runeLength(cleanContent) < minChars) {
         cleanContent = await _forceMinCharsForLastAssistant(
           baseContextMsgs: contextMsgs,
@@ -927,12 +918,9 @@ class ChatProvider extends ChangeNotifier {
           minChars: minChars,
           maxChars: maxChars,
           temperature: temp,
-          disallowQuickReply: true,
+          suppressQuickReplies: true,
           requestToken: requestToken,
         );
-        extracted = _extractQuickReplies(cleanContent);
-        cleanContent = extracted.content;
-        finalQuickReplies = extracted.quickReplies ?? finalQuickReplies;
       }
 
       final enforced = _enforceNonEroticOutput(
@@ -966,7 +954,7 @@ class ChatProvider extends ChangeNotifier {
           updatedAt: DateTime.now(), affection: _affm.affection.round());
       await DatabaseService.updateConversation(updatedConv);
 
-      if (finalQuickReplies != null) {
+      if (finalQuickReplies.isNotEmpty) {
         _messages[_messages.length - 1] = _messages[_messages.length - 1]
             .copyWith(content: cleanContent, quickReplies: finalQuickReplies);
         await DatabaseService.insertMessage(_messages[_messages.length - 1]);
@@ -989,7 +977,7 @@ class ChatProvider extends ChangeNotifier {
 
     notifyListeners();
 
-    if (fullContent != null) {
+    if (streamed != null) {
       if (inlineDelta != null) {
         _affm.previousRawAffection = _affm.affection;
       }
@@ -1114,20 +1102,6 @@ class ChatProvider extends ChangeNotifier {
     // Increment round count, then delegate to shared reply pipeline
     _affm.roundCount++;
     await _processAndStreamReply(text.trim(), requestToken: requestToken);
-  }
-
-  /// Parse quick-reply block from AI response.
-  /// Format: \n[快捷回复]\n1. xxx\n2. yyy
-  static List<String>? _parseQuickReplies(String content) {
-    final m = RegExp(
-      r'\[快捷回复\]\s*\n\s*(?:1|一)[\.、．:：]\s*(.+?)\s*\n\s*(?:2|二)[\.、．:：]\s*(.+?)(?:\s*$|\n\s*$)',
-      multiLine: true,
-    ).firstMatch(content);
-    if (m == null) return null;
-    final a = m.group(1)!.trim();
-    final b = m.group(2)!.trim();
-    if (a.isEmpty || b.isEmpty) return null;
-    return [a, b];
   }
 
   static String _truncateByChars(String text, int maxChars) {
@@ -1412,16 +1386,6 @@ JSON 示例：
     return parts.join('\n');
   }
 
-  static ({String content, List<String>? quickReplies}) _extractQuickReplies(
-      String content) {
-    final qr = _parseQuickReplies(content);
-    if (qr == null) return (content: content, quickReplies: null);
-    final qrIdx = content.indexOf('\n[快捷回复]');
-    final stripped =
-        qrIdx >= 0 ? content.substring(0, qrIdx).trimRight() : content;
-    return (content: stripped, quickReplies: qr);
-  }
-
   static int _runeLength(String text) => text.runes.length;
 
   bool _containsBlockedContentInNonErotic(String text) {
@@ -1480,15 +1444,15 @@ JSON 示例：
     notifyListeners();
   }
 
-  ({String content, List<String>? quickReplies}) _enforceNonEroticOutput(
-      {required String content, List<String>? quickReplies}) {
+  ({String content, List<String> quickReplies}) _enforceNonEroticOutput(
+      {required String content, required List<String> quickReplies}) {
     if (_eroticMode) return (content: content, quickReplies: quickReplies);
 
     if (_containsBlockedContentInNonErotic(content)) {
-      return (content: _nonEroticRefusalMessage(), quickReplies: null);
+      return (content: _nonEroticRefusalMessage(), quickReplies: const []);
     }
 
-    if (quickReplies == null || quickReplies.isEmpty) {
+    if (quickReplies.isEmpty) {
       return (content: content, quickReplies: quickReplies);
     }
 
@@ -1496,7 +1460,7 @@ JSON 示例：
         .where((q) => !_containsBlockedContentInNonErotic(q))
         .toList();
     if (safeReplies.length < 2) {
-      return (content: content, quickReplies: null);
+      return (content: content, quickReplies: const []);
     }
     return (content: content, quickReplies: safeReplies.take(2).toList());
   }
@@ -1508,7 +1472,7 @@ JSON 示例：
     required int maxChars,
     required double temperature,
     required RequestToken requestToken,
-    bool disallowQuickReply = false,
+    bool suppressQuickReplies = false,
   }) async {
     if (minChars <= 0 ||
         _service == null ||
@@ -1536,12 +1500,14 @@ JSON 示例：
         {
           'role': 'system',
           'content':
-              '你上一条回复未达到最少$minChars个汉字。请只续写正文，不要重复前文，不要加解释、编号、标签，补充约$askChars个汉字。'
-                  '${disallowQuickReply ? ' 严禁输出[快捷回复]区块、严禁再列出候选句。' : ''}'
+                  '你上一条回复未达到最少$minChars个汉字。请只续写正文，不要重复前文，不要加解释、编号、标签，补充约$askChars个汉字。'
+                  '${suppressQuickReplies ? ' 本次补写不生成快捷回复，quick_replies 必须为空数组。' : ''}'
         },
       ];
 
       int? usageTotal;
+      var rawFragment = '';
+      final baseContent = content;
       final appended = await _service!.streamChatRaw(
         contextMessages: fillContext,
         temperature: temperature,
@@ -1552,7 +1518,10 @@ JSON 示例：
         },
         onToken: (token) {
           if (!_isRequestCurrent(requestToken)) return;
-          content += token;
+          rawFragment += token;
+          final appendedVisible =
+              StructuredReplyParser.visibleText(rawFragment);
+          content = baseContent + appendedVisible;
           if (maxChars > 0) {
             content = _truncateByChars(content, maxChars);
           }
@@ -1564,10 +1533,17 @@ JSON 示例：
       );
 
       if (!_isRequestCurrent(requestToken) || appended.trim().isEmpty) break;
+      final appendedVisible =
+          StructuredReplyParser.parseAny(appended).reply;
+      if (appendedVisible.trim().isEmpty) break;
       final estimatedUsage =
           DeepSeekService.estimateTotalTokens(fillContext, appended);
       final deltaTokens = usageTotal ?? estimatedUsage;
 
+      content = _truncateByChars(
+        baseContent + appendedVisible,
+        maxChars,
+      );
       final idx = _messages.length - 1;
       final prevTotal = _messages[idx].totalTokens ?? 0;
       _messages[idx] =
@@ -1639,7 +1615,7 @@ JSON 示例：
     _streamingContent = '';
     _ensureAssistantPendingBubble();
 
-    // Build context via shared ContextBuilder (no Δ tag, inject continue)
+    // Build context with hidden structured output and no metadata for continue.
     final conv = await DatabaseService.getConversation(_currentConvId!);
     if (!_isRequestCurrent(requestToken)) return;
     final lastAi = _messages
@@ -1664,6 +1640,9 @@ JSON 示例：
       messages: _messages,
       segments: _segments,
       kbResults: kbResults,
+      injectStructuredReply: true,
+      includeAffectionDelta: false,
+      includeQuickReplies: false,
       injectContinue: true,
     );
     if (!_isRequestCurrent(requestToken)) return;
@@ -1687,7 +1666,7 @@ JSON 示例：
       affectionEnabled: _affectionEnabled,
       affection: _affm.affection.round().toDouble(),
     );
-    final fullContent = await _streamAssistantReply(
+    final streamed = await _streamAssistantReply(
       contextMsgs: contextMsgs,
       temperature: temp,
       maxTokens: maxTokensCont,
@@ -1695,10 +1674,10 @@ JSON 示例：
       requestToken: requestToken,
     );
 
-    if (fullContent != null && _isRequestCurrent(requestToken)) {
+    if (streamed != null && _isRequestCurrent(requestToken)) {
       if (maxCharsCont > 0) {
-        final trimmed = _truncateByChars(fullContent, maxCharsCont);
-        if (trimmed != fullContent &&
+        final trimmed = _truncateByChars(streamed.visible, maxCharsCont);
+        if (trimmed != streamed.visible &&
             _messages.isNotEmpty &&
             _messages.last.role == 'assistant') {
           _messages[_messages.length - 1] =

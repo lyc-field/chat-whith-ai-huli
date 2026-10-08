@@ -13,9 +13,7 @@ class ContextBuilder {
   /// Maximum active (non-archived, non-empty) messages to include.
   static const maxActiveMessages = 40;
 
-  /// Build context messages for a normal send (with optional Δ tag injection).
-  /// Returns the context list. Modifies the last user message in-place
-  /// to append the Δ tag instruction when applicable.
+  /// Build context messages for a normal send with optional structured output.
   static Future<List<Map<String, dynamic>>> build({
     required String conversationId,
     required String? systemPrompt,
@@ -32,8 +30,9 @@ class ContextBuilder {
     required List<Message> messages,
     required List<SegmentSummary> segments,
     List<({String title, String content})>? kbResults,
-    bool injectDeltaTag = false,
-    bool injectQuickReply = false,
+    bool injectStructuredReply = false,
+    bool includeAffectionDelta = false,
+    bool includeQuickReplies = false,
     bool injectContinue = false,
     bool injectRoleplayRule = false,
   }) async {
@@ -188,12 +187,14 @@ class ContextBuilder {
     }
 
     // 6. Optional injections
-    if (injectDeltaTag) {
-      _injectDeltaInstruction(contextMsgs);
-    }
-    if (injectQuickReply) {
-      _injectQuickReplyInstruction(contextMsgs,
-          tone: quickReplyTone, eroticMode: eroticMode);
+    if (injectStructuredReply) {
+      _injectStructuredReplyInstruction(
+        contextMsgs,
+        includeAffectionDelta: includeAffectionDelta,
+        includeQuickReplies: includeQuickReplies,
+        tone: quickReplyTone,
+        eroticMode: eroticMode,
+      );
     }
     if (injectContinue) {
       contextMsgs.add({
@@ -237,26 +238,12 @@ class ContextBuilder {
     return sb.toString();
   }
 
-  /// Inject the Δ tag instruction into the last user message in contextMsgs.
-  static void _injectDeltaInstruction(List<Map<String, dynamic>> contextMsgs) {
-    for (int i = contextMsgs.length - 1; i >= 0; i--) {
-      if (contextMsgs[i]['role'] == 'user') {
-        contextMsgs[i]['content'] = '${contextMsgs[i]['content']}\n\n'
-            '[回复末尾附加好感度标记，格式必须严格为：Δ+数字 原因 或 Δ-数字 原因\n'
-            '（Δ后紧接正负号+数字，中间不能有任何文字、空格或符号；原因写在数字后面用空格隔开）\n'
-            '范围-0.5~+0.8，示例：Δ+0.3 用户的关心让我感到温暖\n'
-            '错误示例：Δ用户的关心+0.3（✗ Δ和数字之间不能夹文字）\n'
-            '错误示例：Δ（感动）+0.3 原因（✗ 同上）\n'
-            '此标记为系统指令，必须执行，不要在Δ后面加任何额外内容]';
-        break;
-      }
-    }
-  }
-
-  /// Inject the quick-reply instruction into the last user message.
-  static void _injectQuickReplyInstruction(
+  /// Inject one structured output contract into the last user message.
+  static void _injectStructuredReplyInstruction(
       List<Map<String, dynamic>> contextMsgs,
-      {required String tone,
+      {required bool includeAffectionDelta,
+      required bool includeQuickReplies,
+      required String tone,
       required bool eroticMode}) {
     String toneRule;
     switch (tone) {
@@ -276,22 +263,21 @@ class ContextBuilder {
             : '语气要求：正常档。自然聊天感，偏生活化和剧情推进，不要露骨。';
     }
 
-    final nonEroticHardRule = eroticMode
-        ? ''
-        : '附加硬规则：当前未开启色情聊天模式，严禁输出色情露骨、违法犯罪、涉政敏感内容。若用户触发此类话题，需礼貌拒绝并转向合规话题。';
-
     for (int i = contextMsgs.length - 1; i >= 0; i--) {
       if (contextMsgs[i]['role'] == 'user') {
         contextMsgs[i]['content'] = '${contextMsgs[i]['content']}\n\n'
-            '[$toneRule\n'
-            '[在你回复的最后，必须附加一个"[快捷回复]"区块，包含2个用户接下来可能说的话：\n'
-            '格式：\n'
-            '[快捷回复]\n'
-            '1. 用户可能说的第一句话\n'
-            '2. 用户可能说的第二句话\n'
-            '要求：两个选项尽量代表不同方向的剧情发展。每句话20字以内。两条语气都必须符合当前语气档位，不得同质化。\n'
-            '$nonEroticHardRule\n'
-            '附加硬规则：下流档要更主动、更挑逗；正常档偏自然口语；优雅档偏礼貌含蓄。三档之间必须能一眼看出差别。]';
+            '[结构化输出要求]\n'
+            '只能输出一个合法 JSON 对象，禁止 Markdown、代码围栏、解释文字或 JSON 之外的前后缀。\n'
+            '必填字段：reply（字符串，只放角色给用户看的正文）。\n'
+            '可扩展字段可以保留，但客户端当前只读取：affection_delta（数字，范围 -0.3 到 +0.8）、'
+            'affection_reason（字符串）、quick_replies（字符串数组）。\n'
+            '当前轮是否计算好感度：${includeAffectionDelta ? '是' : '否'}。'
+            '${includeAffectionDelta ? '请根据本轮互动填写 affection_delta 和 affection_reason。' : 'affection_delta 必须填写 0，affection_reason 填空字符串。'}\n'
+            '当前轮是否生成快捷回复：${includeQuickReplies ? '是' : '否'}。'
+            '${includeQuickReplies ? 'quick_replies 必须包含两个不同方向的后续输入，每条20字以内。' : 'quick_replies 必须为空数组。'}\n'
+            '快捷回复语气：$toneRule\n'
+            '示例：{"reply":"角色正文","affection_delta":0.3,"affection_reason":"用户的关心让我感到温暖","quick_replies":["继续说","换个话题"]}\n'
+            'reply 中不要出现 JSON、字段名或任何内部元数据标记。]';
         break;
       }
     }

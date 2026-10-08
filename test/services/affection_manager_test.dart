@@ -126,14 +126,19 @@ void main() {
       expect(mgr.emotionState, isNull);
     });
 
-    test('shouldJudgeAffection false before threshold', () {
+    test('shouldJudgeAffection false before the four-round cadence', () {
       final mgr = AffectionManager()..roundCount = 3;
       expect(mgr.shouldJudgeAffection, isFalse);
     });
 
-    test('shouldJudgeAffection true after threshold', () {
-      final mgr = AffectionManager()..roundCount = 6;
+    test('shouldJudgeAffection true on every fourth round', () {
+      final mgr = AffectionManager()..roundCount = 4;
       expect(mgr.shouldJudgeAffection, isTrue);
+    });
+
+    test('shouldJudgeAffection remains false between cadence points', () {
+      final mgr = AffectionManager()..roundCount = 5;
+      expect(mgr.shouldJudgeAffection, isFalse);
     });
 
     test('emotionLabels returns defaults when emotionState is null', () {

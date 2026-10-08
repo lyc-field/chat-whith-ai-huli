@@ -12,7 +12,8 @@ import 'emotion_state_repository.dart';
 /// ChatProvider.  ChatProvider delegates to this class and calls
 /// [notifyListeners] after any mutating call.
 class AffectionManager {
-  static const roundsUntilAffection = 5;
+  static const roundsUntilAffection = 4;
+  static const affectionJudgeInterval = 4;
   // Decay code is intentionally preserved but disabled by product decision.
   static const bool _enableEmotionDecay = false;
 
@@ -32,7 +33,11 @@ class AffectionManager {
   bool get isSelfDestructMode =>
       emotionState != null && EmotionTables.isSelfDestructMode(emotionState!);
 
-  bool get shouldJudgeAffection => roundCount > roundsUntilAffection;
+  /// Judge relationship change once every four rounds (within the requested
+  /// three-to-five-round cadence) instead of on every turn.
+  bool get shouldJudgeAffection =>
+      roundCount >= roundsUntilAffection &&
+      roundCount % affectionJudgeInterval == 0;
 
   static bool shouldUsePersonaEmotionState({
     required bool isNewFormat,
@@ -53,7 +58,7 @@ class AffectionManager {
     match ??= RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$')
         .firstMatch(fullContent);
     if (match != null) {
-      final delta = (double.tryParse(match.group(1)!) ?? 0.0).clamp(-0.5, 0.8);
+      final delta = (double.tryParse(match.group(1)!) ?? 0.0).clamp(-0.3, 0.8);
       final reason = match.group(2)!.trim();
       clean = clean.replaceFirst(match.group(0)!, '').trimRight();
       if (clean.isEmpty) clean = fullContent;
