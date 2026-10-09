@@ -964,8 +964,7 @@ class _ChatPageState extends State<ChatPage> {
           Icon(isExpanded ? Icons.expand_less : Icons.expand_more,
               size: 16, color: theme.colorScheme.outline),
           const SizedBox(width: 6),
-          Text(
-              '第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
+          Text('第 ${seg.effectiveRoundStart}-${seg.effectiveRoundEnd} 轮对话',
               style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
           const Text(' | ', style: TextStyle(fontSize: 12, color: Colors.grey)),
           Text(isExpanded ? '折叠' : '展开',
@@ -1030,7 +1029,7 @@ class _ChatPageState extends State<ChatPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                  '总结第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
+                  '总结第 ${seg.effectiveRoundStart}-${seg.effectiveRoundEnd} 轮对话',
                   style: Theme.of(ctx).textTheme.titleMedium),
               const SizedBox(height: 12),
               TextField(

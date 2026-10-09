@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/emotion_service.dart';
 import '../services/database_service.dart';
 import '../services/reply_style_policy.dart';
+import '../services/chat_memory_service.dart';
 
 /// Builds the full message context for AI API calls.
 /// Extracted from ChatProvider to eliminate duplication between
@@ -30,6 +31,7 @@ class ContextBuilder {
     String? selfEmotionTemplate,
     required List<Message> messages,
     required List<SegmentSummary> segments,
+    String? memoryQuery,
     List<({String title, String content})>? kbResults,
     bool injectStructuredReply = false,
     bool includeAffectionDelta = false,
@@ -140,13 +142,18 @@ class ContextBuilder {
     }
 
     // 3. Segment summaries — only latest 8 to avoid context bloat
-    final latestSegments =
-        segments.length > 8 ? segments.sublist(segments.length - 8) : segments;
-    for (final seg in latestSegments) {
+    final selectedSegments = ChatMemoryService.selectRelevantSegments(
+      segments,
+      query: memoryQuery ?? '',
+      latestCount: memoryQuery == null || memoryQuery.trim().isEmpty ? 8 : 2,
+      maxRelevant: 3,
+    );
+    for (final seg in selectedSegments) {
       if (seg.content.trim().isNotEmpty) {
         contextMsgs.add({
           'role': 'system',
-          'content': '[对话历史总结 ${seg.segmentIndex + 1}] ${seg.content}',
+          'content':
+              '[对话历史总结 ${seg.effectiveRoundStart}-${seg.effectiveRoundEnd}轮] ${seg.content}',
         });
       }
     }
@@ -239,8 +246,7 @@ class ContextBuilder {
     sb.writeln('  好感度：${state.affection.toStringAsFixed(1)}/100');
     if (EmotionTables.isSelfDestructMode(state)) {
       sb.writeln();
-      sb.writeln(
-          '⚠ 高压倾诉模式：允许角色表达痛苦、自我怀疑和失控感，但不要美化或鼓励自残、自毁或绝望。'
+      sb.writeln('⚠ 高压倾诉模式：允许角色表达痛苦、自我怀疑和失控感，但不要美化或鼓励自残、自毁或绝望。'
           '限制极端内心独白长度，优先加入暂停、求助、被安慰、稳定和缓和的剧情方向。');
     }
     sb.writeln();

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/segment_summary.dart';
+import '../providers/chat_provider.dart';
 import '../services/database_service.dart';
 import '../services/auth_service.dart';
 
@@ -15,6 +17,7 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
   List<SegmentSummary> _segments = [];
   bool _loading = true;
   bool _autoSummary = false;
+  int? _regeneratingSegment;
 
   @override
   void initState() {
@@ -26,7 +29,13 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
     final segments =
         await DatabaseService.getSegmentSummaries(widget.conversationId);
     final auto = await AuthService.getAutoSummaryEnabled();
-    if (mounted) setState(() { _segments = segments; _loading = false; _autoSummary = auto; });
+    if (mounted) {
+      setState(() {
+        _segments = segments;
+        _loading = false;
+        _autoSummary = auto;
+      });
+    }
   }
 
   Future<void> _updateSummary(SegmentSummary seg, String content) async {
@@ -34,6 +43,24 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
     await DatabaseService.updateSegmentSummary(updated);
     final idx = _segments.indexWhere((s) => s.id == updated.id);
     if (idx != -1) setState(() => _segments[idx] = updated);
+  }
+
+  Future<void> _regenerateSummary(SegmentSummary seg) async {
+    if (_regeneratingSegment != null) return;
+    setState(() => _regeneratingSegment = seg.segmentIndex);
+    final ok = await context.read<ChatProvider>().regenerateSegmentSummary(
+          widget.conversationId,
+          seg.segmentIndex,
+        );
+    if (!mounted) return;
+    setState(() => _regeneratingSegment = null);
+    if (ok) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI 已按原始轮次重新生成总结')),
+      );
+    }
   }
 
   @override
@@ -56,20 +83,25 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
               const Divider(height: 1),
               Expanded(
                 child: _segments.isEmpty
-              ? Center(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.note_alt_outlined, size: 48,
-                        color: Theme.of(context).colorScheme.outline),
-                    const SizedBox(height: 12),
-                    Text('暂无总结', style: Theme.of(context).textTheme.bodyLarge),
-                  ]))
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  itemCount: _segments.length,
-                  itemBuilder: (_, i) => _buildSummaryCard(context, _segments[i]),
-                ),
+                    ? Center(
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.note_alt_outlined,
+                            size: 48,
+                            color: Theme.of(context).colorScheme.outline),
+                        const SizedBox(height: 12),
+                        Text('暂无总结',
+                            style: Theme.of(context).textTheme.bodyLarge),
+                      ]))
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        itemCount: _segments.length,
+                        itemBuilder: (_, i) =>
+                            _buildSummaryCard(context, _segments[i]),
+                      ),
               ),
-          ]),
+            ]),
     );
   }
 
@@ -84,14 +116,17 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(Icons.bookmark_outline, size: 16, color: theme.colorScheme.primary),
+            Icon(Icons.bookmark_outline,
+                size: 16, color: theme.colorScheme.primary),
             const SizedBox(width: 6),
-            Text('第 ${seg.segmentIndex * 5 + 1}-${(seg.segmentIndex + 1) * 5} 轮对话',
+            Text('第 ${seg.effectiveRoundStart}-${seg.effectiveRoundEnd} 轮对话',
                 style: theme.textTheme.titleSmall),
           ]),
           const SizedBox(height: 12),
           TextField(
-            controller: controller, maxLines: 8, minLines: 3,
+            controller: controller,
+            maxLines: 8,
+            minLines: 3,
             decoration: InputDecoration(
               hintText: isEmpty ? '暂无日记，等待 AI 自动生成...' : '角色写的日记（可修改）...',
               border: const OutlineInputBorder(),
@@ -101,6 +136,20 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
           ),
           const SizedBox(height: 10),
           Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+            OutlinedButton.icon(
+              onPressed: _regeneratingSegment == seg.segmentIndex
+                  ? null
+                  : () => _regenerateSummary(seg),
+              icon: _regeneratingSegment == seg.segmentIndex
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_awesome, size: 16),
+              label: const Text('AI 重新生成'),
+            ),
+            const SizedBox(width: 8),
             if (!isEmpty)
               TextButton(
                   onPressed: () => _updateSummary(seg, ''),
@@ -111,7 +160,8 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
                 final c = controller.text.trim();
                 if (c != seg.content) _updateSummary(seg, c);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('总结已保存'), duration: Duration(seconds: 1)),
+                  const SnackBar(
+                      content: Text('总结已保存'), duration: Duration(seconds: 1)),
                 );
               },
               child: const Text('保存'),

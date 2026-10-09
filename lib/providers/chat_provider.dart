@@ -68,7 +68,6 @@ class ChatProvider extends ChangeNotifier {
   Map<String, String> _emotionTemplateLibrary = {};
   String? _emotionTemplateSignature;
 
-
   List<Message> get messages => _messages;
   List<SegmentSummary> get segments => _segments;
   bool get isPending => _isPending;
@@ -727,6 +726,56 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Rebuild one historical diary summary from exactly the messages archived
+  /// under that segment. Manual edits remain untouched until this is invoked.
+  Future<bool> regenerateSegmentSummary(
+      String conversationId, int segmentIndex) async {
+    if (_currentConvId != conversationId) {
+      await loadConversation(conversationId);
+    }
+    final summary = getSegment(segmentIndex);
+    final service = _service;
+    if (summary == null || service == null) return false;
+    final sourceMessages =
+        ChatMemoryService.selectSegmentMessages(_messages, segmentIndex);
+    if (sourceMessages.isEmpty) return false;
+
+    try {
+      final archiveText = ChatMemoryService.formatArchiveText(sourceMessages);
+      final persona =
+          (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
+              ? _systemPrompt!.trim()
+              : null;
+      final systemPrompt = persona == null
+          ? '你是总结助手。请保持角色口吻，准确整理对话记忆。'
+          : '$persona\n\n请以角色第一人称整理这段已经发生的对话，保持角色口吻，不要编造未发生的内容。';
+      const formatInstruction = '''
+请严格只输出以下四个栏目，每个栏目只出现一次，不能添加其他标题或解释：
+剧情总结：
+事件记忆：
+对用户的关系和心情：
+待会要做什么：
+根据给定对话填写四个栏目，简洁、具体、连续。
+''';
+      final result = await service.chatRaw(
+        '$formatInstruction\n$archiveText',
+        systemPrompt,
+        maxTokens: 800,
+      );
+      final updated = summary.copyWith(
+        content: ChatMemoryService.normalizeDiarySummary(result),
+      );
+      await DatabaseService.updateSegmentSummary(updated);
+      final index = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
+      if (index != -1) _segments[index] = updated;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[Summary] 历史总结重新生成失败: $e');
+      return false;
+    }
+  }
+
   SegmentSummary? getSegment(int segmentIndex) {
     final idx = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
     return idx == -1 ? null : _segments[idx];
@@ -772,12 +821,12 @@ class ChatProvider extends ChangeNotifier {
         onToken: (token) {
           if (!_isRequestCurrent(requestToken)) return;
           _streamingContent += token;
-          var display =
-              StructuredReplyParser.visibleText(_streamingContent);
+          var display = StructuredReplyParser.visibleText(_streamingContent);
           if (maxCharsForDisplay != null && maxCharsForDisplay > 0) {
             display = _truncateByChars(display, maxCharsForDisplay);
           }
-          final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+          final index =
+              _messages.indexWhere((message) => message.id == assistantMsg.id);
           if (index == -1) return;
           _messages[index] = assistantMsg.copyWith(content: display);
           notifyListeners();
@@ -795,7 +844,8 @@ class ChatProvider extends ChangeNotifier {
         content: parsed.reply,
         totalTokens: totalTokensUsed ?? fallbackTotal,
       );
-      final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+      final index =
+          _messages.indexWhere((message) => message.id == assistantMsg.id);
       if (index == -1) return null;
       _messages[index] = savedMsg;
       await DatabaseService.insertMessage(savedMsg);
@@ -803,7 +853,8 @@ class ChatProvider extends ChangeNotifier {
     } catch (e) {
       if (!_isRequestCurrent(requestToken)) return null;
       _error = '请求失败: $e';
-      final index = _messages.indexWhere((message) => message.id == assistantMsg.id);
+      final index =
+          _messages.indexWhere((message) => message.id == assistantMsg.id);
       if (index != -1 && _messages[index].content.isEmpty) {
         _messages.removeAt(index);
       }
@@ -857,6 +908,7 @@ class ChatProvider extends ChangeNotifier {
       selfEmotionTemplate: selfEmotionTemplate,
       messages: _messages,
       segments: _segments,
+      memoryQuery: userText,
       kbResults: kbResults,
       injectStructuredReply: true,
       includeAffectionDelta: false,
@@ -1052,12 +1104,19 @@ class ChatProvider extends ChangeNotifier {
           final persisted = AIPersona(
             id: pending.id,
             conversationId: _currentConvId!,
+            personaMode: pending.personaMode,
             name: pending.name,
             identity: pending.identity,
             personality: pending.personality,
             appearance: pending.appearance,
             notes: pending.notes,
+            speechStyle: pending.speechStyle,
+            relationship: pending.relationship,
+            goals: pending.goals,
+            exampleDialogues: pending.exampleDialogues,
             createdAt: pending.createdAt,
+            affection: pending.affection,
+            initialAffection: pending.initialAffection,
           );
           await DatabaseService.insertAIPersona(persisted);
           pp.replaceWithPersisted([persisted], _currentConvId!);
@@ -1443,9 +1502,7 @@ JSON 示例：
         i++;
       }
     }
-    return rounds.length > 4
-        ? rounds.sublist(rounds.length - 4)
-        : rounds;
+    return rounds.length > 4 ? rounds.sublist(rounds.length - 4) : rounds;
   }
 
   Future<AffectionJudgement?> _judgeFourRoundAffection(
@@ -1538,9 +1595,7 @@ JSON 示例：
     required RequestToken requestToken,
     bool suppressQuickReplies = false,
   }) async {
-    if (minChars <= 0 ||
-        _service == null ||
-        !_isRequestCurrent(requestToken)) {
+    if (minChars <= 0 || _service == null || !_isRequestCurrent(requestToken)) {
       return currentContent;
     }
     if (_messages.isEmpty || _messages.last.role != 'assistant') {
@@ -1564,7 +1619,7 @@ JSON 示例：
         {
           'role': 'system',
           'content':
-                  '你上一条回复未达到最少$minChars个汉字。请只续写正文，不要重复前文，不要加解释、编号、标签，补充约$askChars个汉字。'
+              '你上一条回复未达到最少$minChars个汉字。请只续写正文，不要重复前文，不要加解释、编号、标签，补充约$askChars个汉字。'
                   '${suppressQuickReplies ? ' 本次补写不生成快捷回复，quick_replies 必须为空数组。' : ''}'
         },
       ];
@@ -1597,8 +1652,7 @@ JSON 示例：
       );
 
       if (!_isRequestCurrent(requestToken) || appended.trim().isEmpty) break;
-      final appendedVisible =
-          StructuredReplyParser.parseAny(appended).reply;
+      final appendedVisible = StructuredReplyParser.parseAny(appended).reply;
       if (appendedVisible.trim().isEmpty) break;
       final estimatedUsage =
           DeepSeekService.estimateTotalTokens(fillContext, appended);
@@ -1705,6 +1759,7 @@ JSON 示例：
       selfEmotionTemplate: selfEmotionTemplate,
       messages: _messages,
       segments: _segments,
+      memoryQuery: lastAi?.content,
       kbResults: kbResults,
       immersiveRoleplayPrompt: immersiveRoleplayPrompt,
       injectStructuredReply: true,
@@ -1802,10 +1857,25 @@ JSON 示例：
     final toArchiveIds = toArchive.map((m) => m.id).toList();
     final segmentIndex =
         _segments.isEmpty ? 0 : _segments.last.segmentIndex + 1;
+    final priorRounds = _messages
+        .where((m) =>
+            m.role == 'user' &&
+            m.content.trim().isNotEmpty &&
+            m.segmentIndex != null)
+        .length;
+    final archivedRounds = toArchive
+        .where((m) => m.role == 'user' && m.content.trim().isNotEmpty)
+        .length;
+    final roundStart = priorRounds + 1;
+    final roundEnd = priorRounds + (archivedRounds == 0 ? 8 : archivedRounds);
 
     final summary = SegmentSummary(
       conversationId: conversationId,
       segmentIndex: segmentIndex,
+      roundStart: roundStart,
+      roundEnd: roundEnd,
+      startMessageId: toArchive.isEmpty ? null : toArchive.first.id,
+      endMessageId: toArchive.isEmpty ? null : toArchive.last.id,
     );
     await DatabaseService.insertSegmentSummary(summary);
     if (requestToken != null && !_isRequestCurrent(requestToken)) {
@@ -1852,10 +1922,21 @@ JSON 示例：
             ? '用你的口吻，以第一人称写一段日记，回顾以下对话中发生的事。要求：写短一点，写准一点，只挑最重要的写，不要逐句复述。\n\n$archiveText'
             : '请用第一人称总结以下对话要点，写短写准，只抓关键信息：\n\n$archiveText';
 
-        final result =
-            await _service!.chatRaw(userPrompt, systemPrompt, maxTokens: 800);
+        const formatInstruction = '''
+请严格只输出以下四个栏目，每个栏目只出现一次，不能添加其他标题或解释：
+剧情总结：
+事件记忆：
+对用户的关系和心情：
+待会要做什么：
+根据对话内容填写四个栏目，保持简洁、具体、连续，不要遗漏任何栏目。
+''';
+        final result = await _service!.chatRaw(
+          '$formatInstruction\n$userPrompt',
+          systemPrompt,
+          maxTokens: 800,
+        );
         if (requestToken != null && !_isRequestCurrent(requestToken)) return;
-        final trimmed = result.trim();
+        final trimmed = ChatMemoryService.normalizeDiarySummary(result);
         if (trimmed.isNotEmpty) {
           final updated = summary.copyWith(content: trimmed);
           await DatabaseService.updateSegmentSummary(updated);

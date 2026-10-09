@@ -53,8 +53,8 @@ class AffectionManager {
     var clean = fullContent;
     var match =
         RegExp(r'Δ\s*([+\-±]?\d+\.?\d*)\s*(.*)').firstMatch(fullContent);
-    match ??= RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$')
-        .firstMatch(fullContent);
+    match ??=
+        RegExp(r'Δ.{0,30}?([+\-±]?\d+\.?\d*)\s*(.*)$').firstMatch(fullContent);
     if (match != null) {
       final delta = (double.tryParse(match.group(1)!) ?? 0.0).clamp(-0.3, 0.8);
       final reason = match.group(2)!.trim();
@@ -91,14 +91,14 @@ class AffectionManager {
   }
 
   /// Reset affection + emotion for new-format (persona) conversations.
-  /// Uses the persona's current affection as the initial value (does NOT
-  /// overwrite the persona record — the user's configured value is preserved).
+  /// Uses the persona's configured initial affection (does NOT overwrite the
+  /// live dynamic affection value stored on the persona record).
   Future<void> resetForNewFormat(String convId, AIPersona persona) async {
-    affection = persona.affection;
-    previousRawAffection = persona.affection;
+    affection = persona.initialAffection;
+    previousRawAffection = persona.initialAffection;
     affectionIncreasing = null;
     emotionState = EmotionState.createDefault(convId,
-        initialAffection: persona.affection, personaId: persona.id);
+        initialAffection: persona.initialAffection, personaId: persona.id);
     await DatabaseService.deletePersonaEmotionState(convId, persona.id);
     await EmotionStateRepository.insert(emotionState!);
   }
@@ -161,8 +161,7 @@ class AffectionManager {
   }) async {
     if (isRequestCurrent != null && !isRequestCurrent()) return;
     final targetState = emotionState;
-    final normalizedReason =
-        AffectionBatchService.normalizeReason(reason);
+    final normalizedReason = AffectionBatchService.normalizeReason(reason);
     affection = (affection + delta).clamp(-15.0, 100.0);
     if (targetState != null) {
       targetState.affection = affection;

@@ -6,7 +6,7 @@ import '../models/ai_persona.dart';
 
 class PersonaIO {
   static const _appMarker = 'xiaohu-persona-pack';
-  static const _version = 2;
+  static const _version = 3;
   static const _secretKey = 'xh-ai-chat-2024-secret';
 
   // ─── XOR + Base64 encryption ───
@@ -70,22 +70,32 @@ class PersonaIO {
       'app': _appMarker,
       'version': _version,
       'exported_at': DateTime.now().toIso8601String(),
-      'personas': selectedPersonas.map((p) => {
-        'name': p.name,
-        'identity': p.identity,
-        'personality': p.personality,
-        'appearance': p.appearance,
-        'notes': p.notes,
-      }).toList(),
+      'personas': selectedPersonas
+          .map((p) => {
+                'persona_mode': p.personaMode,
+                'name': p.name,
+                'identity': p.identity,
+                'personality': p.personality,
+                'appearance': p.appearance,
+                'notes': p.notes,
+                'speech_style': p.speechStyle,
+                'relationship': p.relationship,
+                'goals': p.goals,
+                'example_dialogues': p.exampleDialogues,
+                // Export only the configured starting value, never live affection.
+                'initial_affection': p.initialAffection,
+              })
+          .toList(),
       'user_persona': (userPersona != null && userPersona.trim().isNotEmpty)
           ? userPersona.trim()
           : null,
       'opening_line': (openingLine != null && openingLine.trim().isNotEmpty)
           ? openingLine.trim()
           : null,
-      'world_background': (worldBackground != null && worldBackground.trim().isNotEmpty)
-          ? worldBackground.trim()
-          : null,
+      'world_background':
+          (worldBackground != null && worldBackground.trim().isNotEmpty)
+              ? worldBackground.trim()
+              : null,
     };
     const encoder = JsonEncoder.withIndent('  ');
     final plainJson = encoder.convert(payload);
@@ -120,15 +130,33 @@ class PersonaIO {
 
   /// Parse and validate an imported file content.
   /// Supports: v2 JSON wrapper, v1 raw base64 (.xhp), and legacy plain JSON.
-  static ({List<AIPersona> personas, String? userPersona, String? worldBackground, String? openingLine, String? error}) parseImportJson(String raw) {
+  static ({
+    List<AIPersona> personas,
+    String? userPersona,
+    String? worldBackground,
+    String? openingLine,
+    String? error
+  }) parseImportJson(String raw) {
     try {
       final jsonStr = _resolvePayload(raw);
       if (jsonStr == null) {
-        return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '无法识别文件格式');
+        return (
+          personas: [],
+          userPersona: null,
+          worldBackground: null,
+          openingLine: null,
+          error: '无法识别文件格式'
+        );
       }
       final map = jsonDecode(jsonStr) as Map<String, dynamic>;
       if (map['app'] != _appMarker) {
-        return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式不匹配，仅支持导入本应用导出的角色包');
+        return (
+          personas: [],
+          userPersona: null,
+          worldBackground: null,
+          openingLine: null,
+          error: '文件格式不匹配，仅支持导入本应用导出的角色包'
+        );
       }
 
       final personas = <AIPersona>[];
@@ -137,11 +165,21 @@ class PersonaIO {
         for (final p in personaList) {
           final pm = p as Map<String, dynamic>;
           personas.add(AIPersona(
+            personaMode: pm['persona_mode'] == AIPersona.detailedMode
+                ? AIPersona.detailedMode
+                : AIPersona.simpleMode,
             name: (pm['name'] as String?) ?? '',
             identity: (pm['identity'] as String?) ?? '',
             personality: (pm['personality'] as String?) ?? '',
             appearance: (pm['appearance'] as String?) ?? '',
             notes: (pm['notes'] as String?) ?? '',
+            speechStyle: (pm['speech_style'] as String?) ?? '',
+            relationship: (pm['relationship'] as String?) ?? '',
+            goals: (pm['goals'] as String?) ?? '',
+            exampleDialogues: (pm['example_dialogues'] as String?) ?? '',
+            initialAffection:
+                (pm['initial_affection'] as num?)?.toDouble() ?? 30.0,
+            affection: (pm['initial_affection'] as num?)?.toDouble() ?? 30.0,
           ));
         }
       }
@@ -154,7 +192,13 @@ class PersonaIO {
         error: null,
       );
     } catch (_) {
-      return (personas: [], userPersona: null, worldBackground: null, openingLine: null, error: '文件格式错误，无法解析该文件');
+      return (
+        personas: [],
+        userPersona: null,
+        worldBackground: null,
+        openingLine: null,
+        error: '文件格式错误，无法解析该文件'
+      );
     }
   }
 

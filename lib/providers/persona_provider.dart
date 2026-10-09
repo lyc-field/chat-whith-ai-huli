@@ -92,10 +92,17 @@ class PersonaProvider extends ChangeNotifier {
     final persona = AIPersona(
       conversationId: _conversationId!,
       name: template.name,
+      personaMode: template.personaMode,
       identity: template.identity,
       personality: template.personality,
       appearance: template.appearance,
       notes: template.notes,
+      speechStyle: template.speechStyle,
+      relationship: template.relationship,
+      goals: template.goals,
+      exampleDialogues: template.exampleDialogues,
+      initialAffection: template.initialAffection,
+      affection: template.initialAffection,
     );
     await DatabaseService.insertAIPersona(persona);
     _personas.add(persona);

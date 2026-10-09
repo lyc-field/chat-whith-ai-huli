@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/ai_persona.dart';
 import '../providers/persona_provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/persona_io.dart';
@@ -22,7 +21,10 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
   void initState() {
     super.initState();
     final pp = context.read<PersonaProvider>();
-    _personaChecked = List.filled(pp.personas.length, false);
+    _personaChecked = List.filled(pp.personas.length, true);
+    _exportUser = true;
+    _exportOpening = true;
+    _exportWorld = true;
   }
 
   void _selectAll() {
@@ -40,25 +42,21 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
     final pp = context.read<PersonaProvider>();
     final chat = context.read<ChatProvider>();
 
-    final selectedPersonas = <AIPersona>[];
-    for (int i = 0; i < _personaChecked.length; i++) {
-      if (_personaChecked[i]) {
-        selectedPersonas.add(pp.personas[i]);
-      }
-    }
+    final selectedPersonas = pp.personas.toList();
 
     if (selectedPersonas.isEmpty && !_exportUser && !_exportWorld) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一项导出内容'), duration: Duration(seconds: 1)),
+        const SnackBar(
+            content: Text('请至少选择一项导出内容'), duration: Duration(seconds: 1)),
       );
       return;
     }
 
     final json = PersonaIO.buildExportJson(
       selectedPersonas: selectedPersonas,
-      userPersona: _exportUser ? chat.userPersona : null,
-      openingLine: _exportOpening ? chat.openingLine : null,
-      worldBackground: _exportWorld ? chat.worldBackground : null,
+      userPersona: chat.userPersona,
+      openingLine: chat.openingLine,
+      worldBackground: chat.worldBackground,
     );
 
     // Return JSON to caller — caller handles file naming + sharing
@@ -81,15 +79,22 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('AI 角色人设', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              const Text(
+                '将自动完整导出当前对话中的全部角色、人设模式、示例对话和初始好感度。',
+                style: TextStyle(fontSize: 12),
+              ),
               const SizedBox(height: 6),
               if (pp.personas.isEmpty)
-                Text('暂无角色', style: TextStyle(color: theme.colorScheme.outline, fontSize: 13))
+                Text('暂无角色',
+                    style: TextStyle(
+                        color: theme.colorScheme.outline, fontSize: 13))
               else
                 ...List.generate(pp.personas.length, (i) {
                   final p = pp.personas[i];
                   return CheckboxListTile(
                     value: _personaChecked[i],
-                    onChanged: (v) => setState(() => _personaChecked[i] = v ?? false),
+                    onChanged: null,
                     title: Text(p.name.isNotEmpty ? p.name : '未命名角色',
                         style: const TextStyle(fontSize: 14)),
                     contentPadding: EdgeInsets.zero,
@@ -97,53 +102,53 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
                     controlAffinity: ListTileControlAffinity.leading,
                   );
                 }),
-
               const Divider(height: 20),
-
               CheckboxListTile(
                 value: _exportUser,
-                onChanged: (v) => setState(() => _exportUser = v ?? false),
+                onChanged: null,
                 title: Text('用户人设',
-                    style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface)),
+                    style: TextStyle(
+                        fontSize: 14, color: theme.colorScheme.onSurface)),
                 subtitle: Text(
                     context.read<ChatProvider>().userPersona ?? '(未设置)',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.outline)),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 controlAffinity: ListTileControlAffinity.leading,
               ),
-
               const Divider(height: 20),
-
               CheckboxListTile(
                 value: _exportOpening,
-                onChanged: (v) => setState(() => _exportOpening = v ?? false),
+                onChanged: null,
                 title: Text('开场白',
-                    style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface)),
+                    style: TextStyle(
+                        fontSize: 14, color: theme.colorScheme.onSurface)),
                 subtitle: Text(
                     context.read<ChatProvider>().openingLine ?? '(未设置)',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.outline)),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 controlAffinity: ListTileControlAffinity.leading,
               ),
-
               const Divider(height: 20),
-
               CheckboxListTile(
                 value: _exportWorld,
-                onChanged: (v) => setState(() => _exportWorld = v ?? false),
+                onChanged: null,
                 title: Text('世界背景',
-                    style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface)),
+                    style: TextStyle(
+                        fontSize: 14, color: theme.colorScheme.onSurface)),
                 subtitle: Text(
                     context.read<ChatProvider>().worldBackground ?? '(未设置)',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+                    style: TextStyle(
+                        fontSize: 12, color: theme.colorScheme.outline)),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 controlAffinity: ListTileControlAffinity.leading,
@@ -155,17 +160,20 @@ class _ExportPersonaDialogState extends State<ExportPersonaDialog> {
       actions: [
         OutlinedButton(
           onPressed: () => Navigator.pop(context),
-          style: OutlinedButton.styleFrom(foregroundColor: theme.colorScheme.outline),
+          style: OutlinedButton.styleFrom(
+              foregroundColor: theme.colorScheme.outline),
           child: const Text('取消'),
         ),
         TextButton(
           onPressed: _selectAll,
-          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.primary),
+          style:
+              TextButton.styleFrom(foregroundColor: theme.colorScheme.primary),
           child: const Text('全选'),
         ),
         FilledButton(
           onPressed: _doExport,
-          style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.primary),
+          style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.primary),
           child: const Text('确定导出'),
         ),
       ],

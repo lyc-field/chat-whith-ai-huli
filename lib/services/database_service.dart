@@ -32,7 +32,7 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 21,
+        version: 22,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -50,7 +50,7 @@ class DatabaseService {
       try {
         await File(path).delete();
       } catch (_) {}
-      return await openDatabase(path, version: 21, onCreate: _onCreate);
+      return await openDatabase(path, version: 22, onCreate: _onCreate);
     }
   }
 
@@ -96,6 +96,10 @@ class DatabaseService {
         conversation_id TEXT NOT NULL,
         content TEXT NOT NULL DEFAULT '',
         segment_index INTEGER NOT NULL,
+        round_start INTEGER,
+        round_end INTEGER,
+        start_message_id TEXT,
+        end_message_id TEXT,
         created_at TEXT NOT NULL
       )
     ''');
@@ -188,11 +192,17 @@ class DatabaseService {
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
         name TEXT NOT NULL,
+        persona_mode TEXT NOT NULL DEFAULT 'simple',
         identity TEXT NOT NULL DEFAULT '',
         personality TEXT NOT NULL DEFAULT '',
         appearance TEXT NOT NULL DEFAULT '',
         notes TEXT NOT NULL DEFAULT '',
+        speech_style TEXT NOT NULL DEFAULT '',
+        relationship TEXT NOT NULL DEFAULT '',
+        goals TEXT NOT NULL DEFAULT '',
+        example_dialogues TEXT NOT NULL DEFAULT '',
         affection REAL NOT NULL DEFAULT 30.0,
+        initial_affection REAL NOT NULL DEFAULT 30.0,
         created_at TEXT NOT NULL
       )
     ''');
@@ -453,6 +463,30 @@ class DatabaseService {
             'ALTER TABLE conversations ADD COLUMN erotic_mode INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
     }
+    if (oldVersion < 22) {
+      for (final statement in [
+        "ALTER TABLE ai_personas ADD COLUMN persona_mode TEXT NOT NULL DEFAULT 'simple'",
+        "ALTER TABLE ai_personas ADD COLUMN speech_style TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE ai_personas ADD COLUMN relationship TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE ai_personas ADD COLUMN goals TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE ai_personas ADD COLUMN example_dialogues TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE ai_personas ADD COLUMN initial_affection REAL NOT NULL DEFAULT 30.0",
+        "ALTER TABLE segment_summaries ADD COLUMN round_start INTEGER",
+        "ALTER TABLE segment_summaries ADD COLUMN round_end INTEGER",
+        "ALTER TABLE segment_summaries ADD COLUMN start_message_id TEXT",
+        "ALTER TABLE segment_summaries ADD COLUMN end_message_id TEXT",
+      ]) {
+        try {
+          await db.execute(statement);
+        } catch (_) {}
+      }
+      // Existing personas only have a live affection value. Preserve it as
+      // their configured starting value instead of silently resetting it.
+      try {
+        await db.execute(
+            'UPDATE ai_personas SET initial_affection = affection WHERE initial_affection = 30.0');
+      } catch (_) {}
+    }
   }
 
   /// ─── Conversation CRUD ────────
@@ -583,8 +617,7 @@ class DatabaseService {
     await batch.commit(noResult: true);
   }
 
-  static Future<void> clearMessageArchiveStatus(
-      List<String> messageIds) async {
+  static Future<void> clearMessageArchiveStatus(List<String> messageIds) async {
     final db = await database;
     final batch = db.batch();
     for (final id in messageIds) {

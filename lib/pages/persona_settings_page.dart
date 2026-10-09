@@ -29,7 +29,12 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
   late TextEditingController _personalityCtrl;
   late TextEditingController _appearanceCtrl;
   late TextEditingController _notesCtrl;
+  late TextEditingController _speechStyleCtrl;
+  late TextEditingController _relationshipCtrl;
+  late TextEditingController _goalsCtrl;
+  late TextEditingController _exampleDialoguesCtrl;
   late final TextEditingController _legacyPromptCtrl;
+  String _personaMode = AIPersona.simpleMode;
   bool _showEroticSwitch = false;
 
   @override
@@ -44,6 +49,9 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     _affectionSlider = chat.affection.clamp(15, 50);
 
     final pp = context.read<PersonaProvider>();
+    _affectionSlider = (pp.currentPersona?.initialAffection ?? _affectionSlider)
+        .clamp(15, 50)
+        .round();
     _initPersonaControllers(pp.currentPersona);
     AuthService.hasAdminLoggedEver().then((v) {
       if (mounted) setState(() => _showEroticSwitch = v);
@@ -56,6 +64,12 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     _personalityCtrl = TextEditingController(text: p?.personality ?? '');
     _appearanceCtrl = TextEditingController(text: p?.appearance ?? '');
     _notesCtrl = TextEditingController(text: p?.notes ?? '');
+    _speechStyleCtrl = TextEditingController(text: p?.speechStyle ?? '');
+    _relationshipCtrl = TextEditingController(text: p?.relationship ?? '');
+    _goalsCtrl = TextEditingController(text: p?.goals ?? '');
+    _exampleDialoguesCtrl =
+        TextEditingController(text: p?.exampleDialogues ?? '');
+    _personaMode = p?.personaMode ?? AIPersona.simpleMode;
   }
 
   void _disposePersonaControllers() {
@@ -64,6 +78,10 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     _personalityCtrl.dispose();
     _appearanceCtrl.dispose();
     _notesCtrl.dispose();
+    _speechStyleCtrl.dispose();
+    _relationshipCtrl.dispose();
+    _goalsCtrl.dispose();
+    _exampleDialoguesCtrl.dispose();
   }
 
   // Call when any AI persona field changes — debounced auto-save
@@ -75,6 +93,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
     p.personality = _personalityCtrl.text.trim();
     p.appearance = _appearanceCtrl.text.trim();
     p.notes = _notesCtrl.text.trim();
+    p.personaMode = _personaMode;
+    p.speechStyle = _speechStyleCtrl.text.trim();
+    p.relationship = _relationshipCtrl.text.trim();
+    p.goals = _goalsCtrl.text.trim();
+    p.exampleDialogues = _exampleDialoguesCtrl.text.trim();
     pp.autoSave(p);
   }
 
@@ -87,6 +110,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       cp.personality = _personalityCtrl.text.trim();
       cp.appearance = _appearanceCtrl.text.trim();
       cp.notes = _notesCtrl.text.trim();
+      cp.personaMode = _personaMode;
+      cp.speechStyle = _speechStyleCtrl.text.trim();
+      cp.relationship = _relationshipCtrl.text.trim();
+      cp.goals = _goalsCtrl.text.trim();
+      cp.exampleDialogues = _exampleDialoguesCtrl.text.trim();
       pp.saveImmediately(cp);
     }
     pp.selectPersona(index);
@@ -110,6 +138,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
         cp.personality = _personalityCtrl.text.trim();
         cp.appearance = _appearanceCtrl.text.trim();
         cp.notes = _notesCtrl.text.trim();
+        cp.personaMode = _personaMode;
+        cp.speechStyle = _speechStyleCtrl.text.trim();
+        cp.relationship = _relationshipCtrl.text.trim();
+        cp.goals = _goalsCtrl.text.trim();
+        cp.exampleDialogues = _exampleDialoguesCtrl.text.trim();
         await pp.saveImmediately(cp);
         final prompt = cp.buildPrompt();
         await chat.setSystemPrompt(prompt);
@@ -124,6 +157,7 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       final cp = pp.currentPersona;
       if (chat.isNewFormat && cp != null) {
         cp.affection = _affectionSlider.toDouble();
+        cp.initialAffection = _affectionSlider.toDouble();
         await pp.saveImmediately(cp);
       }
     }
@@ -182,6 +216,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
       cp.personality = _personalityCtrl.text.trim();
       cp.appearance = _appearanceCtrl.text.trim();
       cp.notes = _notesCtrl.text.trim();
+      cp.personaMode = _personaMode;
+      cp.speechStyle = _speechStyleCtrl.text.trim();
+      cp.relationship = _relationshipCtrl.text.trim();
+      cp.goals = _goalsCtrl.text.trim();
+      cp.exampleDialogues = _exampleDialoguesCtrl.text.trim();
       await pp.saveImmediately(cp);
     }
     await pp.createPersona('新角色');
@@ -262,6 +301,36 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
               ),
             ),
           ] else ...[
+            Text('人设模式', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 6),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment<String>(
+                  value: AIPersona.simpleMode,
+                  label: Text('简易模式'),
+                  icon: Icon(Icons.short_text),
+                ),
+                ButtonSegment<String>(
+                  value: AIPersona.detailedMode,
+                  label: Text('详细模式'),
+                  icon: Icon(Icons.subject),
+                ),
+              ],
+              selected: {_personaMode},
+              onSelectionChanged: (selection) {
+                final mode = selection.first;
+                setState(() => _personaMode = mode);
+                _onPersonaFieldChanged(pp);
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _personaMode == AIPersona.simpleMode
+                  ? '当前使用现有的简易人设字段。'
+                  : '详细模式会额外使用说话风格、关系、目标和示例对话。',
+              style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+            ),
+            const SizedBox(height: 12),
             // ── 新版格式（结构化表单） ──
             Text('AI 角色人设', style: theme.textTheme.titleSmall),
             const SizedBox(height: 12),
@@ -286,6 +355,27 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
                 maxLines: 3,
                 hint: '例如：喜欢晒太阳，讨厌下雨天，一直等待有缘人的到来...',
                 onChanged: () => _onPersonaFieldChanged(pp)),
+            if (_personaMode == AIPersona.detailedMode) ...[
+              const Divider(height: 24),
+              Text('详细人设补充', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              _buildField('说话风格', _speechStyleCtrl,
+                  maxLines: 3,
+                  hint: '例如：短句、克制、偶尔使用比喻',
+                  onChanged: () => _onPersonaFieldChanged(pp)),
+              _buildField('关系与互动', _relationshipCtrl,
+                  maxLines: 3,
+                  hint: '例如：把用户视为重要的旅伴，熟悉后更愿意表达关心',
+                  onChanged: () => _onPersonaFieldChanged(pp)),
+              _buildField('目标与动机', _goalsCtrl,
+                  maxLines: 3,
+                  hint: '例如：寻找失落的书页，同时守护这座图书馆',
+                  onChanged: () => _onPersonaFieldChanged(pp)),
+              _buildField('示例对话', _exampleDialoguesCtrl,
+                  maxLines: 8,
+                  hint: '例如：\n用户：早安\n角色：早安，今天也一起读书吗？',
+                  onChanged: () => _onPersonaFieldChanged(pp)),
+            ],
           ],
 
           const Divider(height: 32),
@@ -527,6 +617,11 @@ class _PersonaSettingsPageState extends State<PersonaSettingsPage> {
         cp.personality = _personalityCtrl.text.trim();
         cp.appearance = _appearanceCtrl.text.trim();
         cp.notes = _notesCtrl.text.trim();
+        cp.personaMode = _personaMode;
+        cp.speechStyle = _speechStyleCtrl.text.trim();
+        cp.relationship = _relationshipCtrl.text.trim();
+        cp.goals = _goalsCtrl.text.trim();
+        cp.exampleDialogues = _exampleDialoguesCtrl.text.trim();
         await pp.saveImmediately(cp);
       }
 
