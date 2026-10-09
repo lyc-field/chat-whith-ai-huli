@@ -726,6 +726,44 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<String?> _generateDiarySummary({
+    required String archiveText,
+    required String? persona,
+  }) async {
+    final service = _service;
+    if (service == null) return null;
+    final systemPrompt = persona == null
+        ? '你是角色记忆整理助手。请用角色本人的自然语气写总结，不要像表格填空。'
+        : '$persona\n\n请用角色本人的自然语气整理记忆，保持性格、语气和第一人称，不要编造对话中没有发生的内容。';
+    const contract = '''
+只输出一个 JSON 对象，不要 Markdown、代码围栏或解释文字。
+可选字段：plot、events、relation、next；不适用的字段直接省略，不要填空字符串。
+plot 是剧情发展，events 是值得长期记住的事实/约定，relation 是角色对用户的关系与心情，next 是已经形成的下一步安排。
+至少输出两个有内容的字段，最多四个；不要把同一信息重复到多个字段。
+每个字段都是角色口吻的自然段，20-120 个字，禁止换行。
+''';
+    final prompt = '$contract\n对话内容：\n$archiveText';
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final retryHint =
+            attempt == 0 ? '' : '\n上一版格式不合格，请重新按 JSON 合同输出至少两个有效字段。';
+        final result = await service.chatRaw(
+          '$prompt$retryHint',
+          systemPrompt,
+          maxTokens: 520,
+        );
+        if (ChatMemoryService.isValidDiarySummary(result)) {
+          return ChatMemoryService.normalizeDiarySummary(result);
+        }
+      } catch (e) {
+        debugPrint(
+            '[Summary] diary generation attempt ${attempt + 1} failed: $e');
+      }
+    }
+    return null;
+  }
+
   /// Rebuild one historical diary summary from exactly the messages archived
   /// under that segment. Manual edits remain untouched until this is invoked.
   Future<bool> regenerateSegmentSummary(
@@ -734,8 +772,7 @@ class ChatProvider extends ChangeNotifier {
       await loadConversation(conversationId);
     }
     final summary = getSegment(segmentIndex);
-    final service = _service;
-    if (summary == null || service == null) return false;
+    if (summary == null || _service == null) return false;
     final sourceMessages =
         ChatMemoryService.selectSegmentMessages(_messages, segmentIndex);
     if (sourceMessages.isEmpty) return false;
@@ -746,25 +783,12 @@ class ChatProvider extends ChangeNotifier {
           (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
               ? _systemPrompt!.trim()
               : null;
-      final systemPrompt = persona == null
-          ? '你是总结助手。请保持角色口吻，准确整理对话记忆。'
-          : '$persona\n\n请以角色第一人称整理这段已经发生的对话，保持角色口吻，不要编造未发生的内容。';
-      const formatInstruction = '''
-请严格只输出以下四个栏目，每个栏目只出现一次，不能添加其他标题或解释：
-剧情总结：
-事件记忆：
-对用户的关系和心情：
-待会要做什么：
-根据给定对话填写四个栏目，简洁、具体、连续。
-''';
-      final result = await service.chatRaw(
-        '$formatInstruction\n$archiveText',
-        systemPrompt,
-        maxTokens: 800,
+      final generated = await _generateDiarySummary(
+        archiveText: archiveText,
+        persona: persona,
       );
-      final updated = summary.copyWith(
-        content: ChatMemoryService.normalizeDiarySummary(result),
-      );
+      if (generated == null || generated.isEmpty) return false;
+      final updated = summary.copyWith(content: generated);
       await DatabaseService.updateSegmentSummary(updated);
       final index = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
       if (index != -1) _segments[index] = updated;
@@ -1915,30 +1939,13 @@ JSON 示例：
             (_systemPrompt != null && _systemPrompt!.trim().isNotEmpty)
                 ? _systemPrompt!.trim()
                 : null;
-        final systemPrompt = persona != null
-            ? '$persona\n\n现在，你正在写日记，以第一人称「我」的口吻回顾刚才发生的事。你必须完全保持设定中的性格、语气和说话风格。日记内容要像角色本人写的，不要像第三人称总结。写得简短精炼，只记录最关键的事件和情绪变化，不要流水账。'
-            : '你是总结助手。请用第一人称「我」的口吻回顾以下对话，保持角色的性格和语气。写得简短精炼，只抓重点，不要展开。';
-        final userPrompt = persona != null
-            ? '用你的口吻，以第一人称写一段日记，回顾以下对话中发生的事。要求：写短一点，写准一点，只挑最重要的写，不要逐句复述。\n\n$archiveText'
-            : '请用第一人称总结以下对话要点，写短写准，只抓关键信息：\n\n$archiveText';
-
-        const formatInstruction = '''
-请严格只输出以下四个栏目，每个栏目只出现一次，不能添加其他标题或解释：
-剧情总结：
-事件记忆：
-对用户的关系和心情：
-待会要做什么：
-根据对话内容填写四个栏目，保持简洁、具体、连续，不要遗漏任何栏目。
-''';
-        final result = await _service!.chatRaw(
-          '$formatInstruction\n$userPrompt',
-          systemPrompt,
-          maxTokens: 800,
-        );
         if (requestToken != null && !_isRequestCurrent(requestToken)) return;
-        final trimmed = ChatMemoryService.normalizeDiarySummary(result);
-        if (trimmed.isNotEmpty) {
-          final updated = summary.copyWith(content: trimmed);
+        final generated = await _generateDiarySummary(
+          archiveText: archiveText,
+          persona: persona,
+        );
+        if (generated != null && generated.isNotEmpty) {
+          final updated = summary.copyWith(content: generated);
           await DatabaseService.updateSegmentSummary(updated);
           if (requestToken != null && !_isRequestCurrent(requestToken)) return;
           final idx =

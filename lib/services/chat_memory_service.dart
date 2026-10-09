@@ -1,5 +1,6 @@
 import '../models/message.dart';
 import '../models/segment_summary.dart';
+import 'json_utils.dart';
 
 /// Pure message selection/formatting helpers used by the memory pipeline.
 class ChatMemoryService {
@@ -91,44 +92,72 @@ class ChatMemoryService {
     return (start: previousRounds + 1, end: previousRounds + count);
   }
 
-  static String normalizeDiarySummary(String raw) {
-    const headings = [
-      '剧情总结',
-      '事件记忆',
-      '对用户的关系和心情',
-      '待会要做什么',
-    ];
-    final text = raw.trim();
-    final positions = <String, int>{};
-    for (final heading in headings) {
-      final index = text.indexOf(heading);
-      if (index >= 0) positions[heading] = index;
-    }
-    if (positions.length < headings.length) {
-      return [
-        '剧情总结：${text.isEmpty ? '暂无' : text}',
-        '事件记忆：',
-        '对用户的关系和心情：',
-        '待会要做什么：',
-      ].join('\n\n');
+  static const _diaryKeys = ['plot', 'events', 'relation', 'next'];
+  static const _diaryLabels = {
+    'plot': '剧情总结',
+    'events': '事件记忆',
+    'relation': '对用户的关系和心情',
+    'next': '待会要做什么',
+  };
+
+  /// Parses the compact model envelope and keeps only meaningful sections.
+  /// A section is optional, but every emitted section is 20–120 characters.
+  static Map<String, String> parseDiarySummary(String raw) {
+    final object = JsonUtils.extractJson(raw);
+    final values = <String, dynamic>{...?object};
+    final aliases = {
+      '剧情总结': 'plot',
+      '事件记忆': 'events',
+      '对用户的关系和心情': 'relation',
+      '待会要做什么': 'next',
+    };
+    for (final entry in aliases.entries) {
+      if (values[entry.key] != null && values[entry.value] == null) {
+        values[entry.value] = values[entry.key];
+      }
     }
 
-    final ordered = headings
-        .map((heading) => (heading: heading, index: positions[heading]!))
-        .toList()
-      ..sort((a, b) => a.index.compareTo(b.index));
     final sections = <String, String>{};
-    for (var i = 0; i < ordered.length; i++) {
-      final current = ordered[i];
-      final end = i + 1 < ordered.length ? ordered[i + 1].index : text.length;
-      final rawSection =
-          text.substring(current.index + current.heading.length, end);
-      sections[current.heading] =
-          rawSection.replaceFirst(RegExp(r'^\s*[：:]\s*'), '').trim();
+    for (final key in _diaryKeys) {
+      final value = values[key];
+      if (value is! String) continue;
+      final clean = _cleanDiaryText(value);
+      if (_isDiarySectionLengthValid(clean)) {
+        sections[key] = _truncateRunes(clean, 120);
+      }
     }
-    return headings
-        .map((heading) => '$heading：${sections[heading] ?? ''}')
+    return sections;
+  }
+
+  static bool isValidDiarySummary(String raw) {
+    return parseDiarySummary(raw).length >= 2;
+  }
+
+  static String normalizeDiarySummary(String raw) {
+    final sections = parseDiarySummary(raw);
+    if (sections.isEmpty) return raw.trim();
+    return _diaryKeys
+        .where(sections.containsKey)
+        .map((key) => '${_diaryLabels[key]}：${sections[key]}')
         .join('\n\n');
+  }
+
+  static String _cleanDiaryText(String value) {
+    return value
+        .replaceAll(RegExp(r'```(?:json)?|```'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  static bool _isDiarySectionLengthValid(String value) {
+    final length = value.runes.length;
+    return length >= 20;
+  }
+
+  static String _truncateRunes(String value, int maxLength) {
+    final runes = value.runes.toList();
+    if (runes.length <= maxLength) return value;
+    return String.fromCharCodes(runes.take(maxLength));
   }
 
   static int _summaryScore(String content, String query) {

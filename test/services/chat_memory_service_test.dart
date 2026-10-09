@@ -74,14 +74,45 @@ void main() {
     expect(range.end, 3);
   });
 
-  test('normalizes diary summaries to the four required sections', () {
-    final normalized = ChatMemoryService.normalizeDiarySummary('只记录了刚才发生的事');
+  test('parses compact JSON diary sections and preserves natural role text',
+      () {
+    final raw = '''
+{"plot":"我陪用户走过安静的长廊，话题从旧书转到了彼此都在意的未来。","events":"我们约好下次继续寻找那本失落的书，也记下了线索藏在钟楼附近。","relation":"听见用户愿意陪我继续寻找，我心里踏实了些，也更愿意把这件事交给我们一起完成。","next":"等用户下次回来，我会先带他去钟楼，再把今天记下的线索一一核对。"}
+''';
 
-    expect(normalized, contains('剧情总结：只记录了刚才发生的事'));
+    final normalized = ChatMemoryService.normalizeDiarySummary(raw);
+
+    expect(ChatMemoryService.isValidDiarySummary(raw), isTrue);
+    expect(normalized, contains('剧情总结：'));
     expect(normalized, contains('事件记忆：'));
     expect(normalized, contains('对用户的关系和心情：'));
     expect(normalized, contains('待会要做什么：'));
-    expect(RegExp('剧情总结：').allMatches(normalized).length, 1);
+  });
+
+  test('rejects one-section output instead of stuffing it into plot', () {
+    const raw = '{"plot":"我只记住了刚才发生的事情，但其他内容都没有整理出来。"}';
+
+    expect(ChatMemoryService.isValidDiarySummary(raw), isFalse);
+    expect(ChatMemoryService.normalizeDiarySummary(raw), contains('剧情总结：'));
+    expect(ChatMemoryService.normalizeDiarySummary(raw), isNot(contains('暂无')));
+  });
+
+  test('omits optional sections that are too short and truncates long sections',
+      () {
+    final longText = '我'.padRight(140, '啊');
+    final raw = '{"plot":"${'我和用户一起确认了接下来的安排，并把重要线索重新整理了一遍。'}",'
+        '"events":"太短",'
+        '"relation":"${'我因为用户愿意耐心听我说完而感到安心，也更愿意把真实想法告诉他。'}",'
+        '"next":"$longText"}';
+
+    final normalized = ChatMemoryService.normalizeDiarySummary(raw);
+    final sections = ChatMemoryService.parseDiarySummary(raw);
+
+    expect(sections.containsKey('events'), isFalse);
+    expect(sections['next']!.runes.length, 120);
+    expect(normalized, contains('剧情总结：'));
+    expect(normalized, contains('对用户的关系和心情：'));
+    expect(normalized, contains('待会要做什么：'));
   });
 
   test('selects only the original messages belonging to one summary segment',
