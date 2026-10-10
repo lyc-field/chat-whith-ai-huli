@@ -726,6 +726,14 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void syncSavedSegmentSummary(SegmentSummary summary) {
+    if (_currentConvId != summary.conversationId) return;
+    final index = _segments.indexWhere((segment) => segment.id == summary.id);
+    if (index == -1) return;
+    _segments[index] = summary;
+    notifyListeners();
+  }
+
   Future<String?> _generateDiarySummary({
     required String archiveText,
     required String? persona,
@@ -759,7 +767,7 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
         final result = await service.chatRaw(
           '$prompt$retryHint',
           systemPrompt,
-          maxTokens: 520,
+          maxTokens: 800,
         );
         if (ChatMemoryService.isValidDiarySummary(result)) {
           // A valid JSON envelope with no useful sections is a valid empty
@@ -806,6 +814,7 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
       final updated =
           summary.copyWith(content: generated, manuallyEdited: false);
       await DatabaseService.updateSegmentSummary(updated);
+      if (_currentConvId != conversationId) return false;
       final index = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
       if (index != -1) _segments[index] = updated;
       notifyListeners();
@@ -1768,6 +1777,8 @@ JSON 示例：
         _service == null ||
         _currentConvId == null) return;
     final requestToken = _beginRequest();
+    final continuationSegmentIndex =
+        _messages.isNotEmpty ? _messages.last.segmentIndex : null;
     _isContinuing = true;
     _isPending = true;
     _streamingContent = '';
@@ -1849,6 +1860,15 @@ JSON 示例：
       }
 
       if (_messages.isNotEmpty && _messages.last.role == 'assistant') {
+        if (continuationSegmentIndex != null &&
+            _messages.last.segmentIndex == null) {
+          _messages[_messages.length - 1] =
+              _messages.last.copyWith(segmentIndex: continuationSegmentIndex);
+          await DatabaseService.updateMessageArchiveStatus(
+            [_messages.last.id],
+            continuationSegmentIndex,
+          );
+        }
         await _forceMinCharsForLastAssistant(
           baseContextMsgs: contextMsgs,
           currentContent: _messages.last.content,

@@ -39,8 +39,11 @@ class _SummaryManagementPageState extends State<SummaryManagementPage> {
   }
 
   Future<void> _updateSummary(SegmentSummary seg, String content) async {
+    final chat = context.read<ChatProvider>();
     final updated = seg.copyWith(content: content.trim(), manuallyEdited: true);
     await DatabaseService.updateSegmentSummary(updated);
+    chat.syncSavedSegmentSummary(updated);
+    if (!mounted) return;
     final idx = _segments.indexWhere((s) => s.id == updated.id);
     if (idx != -1) setState(() => _segments[idx] = updated);
   }

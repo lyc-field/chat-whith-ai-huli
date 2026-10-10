@@ -55,6 +55,16 @@ void main() {
     expect(selected.any((message) => message.content == 'user 9'), isFalse);
   });
 
+  test('counts only user rounds with an assistant response', () {
+    final messages = [
+      Message(conversationId: 'c', role: 'user', content: 'answered'),
+      Message(conversationId: 'c', role: 'assistant', content: 'reply'),
+      Message(conversationId: 'c', role: 'user', content: 'pending'),
+    ];
+
+    expect(ChatMemoryService.countUserRounds(messages), 1);
+  });
+
   test('formats archive text with stable role labels', () {
     final messages = [
       Message(conversationId: 'c', role: 'user', content: '你好'),
@@ -135,6 +145,13 @@ void main() {
     expect(ChatMemoryService.isValidDiarySummary('{}'), isTrue);
     expect(
         ChatMemoryService.isValidDiarySummary('{"unknown":"value"}'), isFalse);
+  });
+
+  test('accepts supported Chinese field names from model output', () {
+    const raw = '{"剧情总结":"我和用户整理了钟楼附近的线索，也决定明天继续沿着旧地图寻找入口。"}';
+
+    expect(ChatMemoryService.isValidDiarySummary(raw), isTrue);
+    expect(ChatMemoryService.normalizeDiarySummary(raw), startsWith('剧情总结：'));
   });
 
   test(

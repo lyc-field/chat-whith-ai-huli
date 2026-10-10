@@ -28,21 +28,43 @@ class ChatMemoryService {
         .where((message) =>
             message.content.trim().isNotEmpty && message.segmentIndex == null)
         .toList();
-    final selected = <Message>[];
-    var selectedRounds = 0;
+    final rounds = <List<Message>>[];
+    List<Message>? current;
+    var hasAssistant = false;
     for (final message in active) {
-      if (message.role == 'user' && selectedRounds >= roundCount) break;
-      selected.add(message);
-      if (message.role == 'user') selectedRounds++;
+      if (message.role == 'user') {
+        if (current != null) {
+          if (!hasAssistant) break;
+          rounds.add(current);
+          if (rounds.length >= roundCount) break;
+        }
+        current = [message];
+        hasAssistant = false;
+      } else if (message.role == 'assistant' && current != null) {
+        current.add(message);
+        hasAssistant = true;
+      }
     }
-    return selected;
+    if (rounds.length < roundCount && current != null && hasAssistant) {
+      rounds.add(current);
+    }
+    return rounds.take(roundCount).expand((round) => round).toList();
   }
 
   static int countUserRounds(Iterable<Message> messages) {
-    return messages
-        .where((message) =>
-            message.role == 'user' && message.content.trim().isNotEmpty)
-        .length;
+    var completed = 0;
+    var pendingUser = false;
+    for (final message in messages) {
+      if (message.content.trim().isEmpty) continue;
+      if (message.role == 'user') {
+        if (pendingUser) return completed;
+        pendingUser = true;
+      } else if (message.role == 'assistant' && pendingUser) {
+        completed++;
+        pendingUser = false;
+      }
+    }
+    return completed;
   }
 
   static String formatArchiveText(Iterable<Message> messages) {
@@ -161,8 +183,7 @@ class ChatMemoryService {
     final object = JsonUtils.extractJson(raw);
     if (object == null) return false;
     if (object.isEmpty) return true;
-    return object.keys.any(_diaryKeys.contains) ||
-        object.keys.any(_diaryLabels.containsKey);
+    return parseDiarySummary(raw).isNotEmpty;
   }
 
   static String normalizeDiarySummary(String raw) {
