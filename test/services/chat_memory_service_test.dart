@@ -19,6 +19,42 @@ void main() {
     expect(selected.map((m) => m.content), ['one', 'two']);
   });
 
+  test('selects eight user-message rounds including assistant continuations',
+      () {
+    final messages = <Message>[];
+    for (var round = 1; round <= 9; round++) {
+      messages.add(Message(
+        conversationId: 'c',
+        role: 'user',
+        content: 'user $round',
+      ));
+      messages.add(Message(
+        conversationId: 'c',
+        role: 'assistant',
+        content: 'assistant $round',
+      ));
+      if (round == 3) {
+        messages.add(Message(
+          conversationId: 'c',
+          role: 'assistant',
+          content: 'assistant continuation',
+        ));
+      }
+    }
+
+    final selected = ChatMemoryService.selectArchiveRounds(
+      messages,
+      roundCount: 8,
+    );
+
+    expect(selected.where((message) => message.role == 'user').length, 8);
+    expect(selected.last.content, 'assistant 8');
+    expect(
+        selected.any((message) => message.content == 'assistant continuation'),
+        isTrue);
+    expect(selected.any((message) => message.content == 'user 9'), isFalse);
+  });
+
   test('formats archive text with stable role labels', () {
     final messages = [
       Message(conversationId: 'c', role: 'user', content: '你好'),
@@ -89,12 +125,59 @@ void main() {
     expect(normalized, contains('待会要做什么：'));
   });
 
-  test('rejects one-section output instead of stuffing it into plot', () {
-    const raw = '{"plot":"我只记住了刚才发生的事情，但其他内容都没有整理出来。"}';
+  test('accepts one valid section and leaves an empty result empty', () {
+    const oneSection = '{"relation":"我听见用户愿意陪我继续走下去，心里比刚才安稳，也更愿意相信这段关系。"}';
 
-    expect(ChatMemoryService.isValidDiarySummary(raw), isFalse);
-    expect(ChatMemoryService.normalizeDiarySummary(raw), contains('剧情总结：'));
-    expect(ChatMemoryService.normalizeDiarySummary(raw), isNot(contains('暂无')));
+    expect(ChatMemoryService.isValidDiarySummary(oneSection), isTrue);
+    expect(ChatMemoryService.normalizeDiarySummary(oneSection),
+        startsWith('对用户的关系和心情：'));
+    expect(ChatMemoryService.normalizeDiarySummary('{}'), isEmpty);
+    expect(ChatMemoryService.isValidDiarySummary('{}'), isTrue);
+    expect(
+        ChatMemoryService.isValidDiarySummary('{"unknown":"value"}'), isFalse);
+  });
+
+  test(
+      'uses the previous two summaries and marks manual edits as trusted references',
+      () {
+    final summaries = [
+      SegmentSummary(
+        conversationId: 'c',
+        segmentIndex: 0,
+        content: '用户确认的旧约定仍然有效，我们之后会一起回到钟楼继续寻找线索。',
+        manuallyEdited: true,
+      ),
+      SegmentSummary(
+        conversationId: 'c',
+        segmentIndex: 1,
+        content: '最近讨论了晚餐和天气，没有形成持续有效的约定。',
+        manuallyEdited: true,
+      ),
+      SegmentSummary(
+        conversationId: 'c',
+        segmentIndex: 2,
+        content: '最新发生的事情是我们暂时改去图书馆查看线索。',
+      ),
+      SegmentSummary(
+        conversationId: 'c',
+        segmentIndex: 3,
+        content: '当前总结，不应被当作上一轮参考。',
+      ),
+    ];
+
+    final references = ChatMemoryService.selectSummaryReferences(
+      summaries,
+      beforeSegmentIndex: 3,
+      limit: 2,
+    );
+
+    expect(references.map((summary) => summary.segmentIndex), [1, 2]);
+    final prompt = ChatMemoryService.formatSummaryReferences(references);
+    expect(prompt, contains('用户确认'));
+    expect(prompt, contains('最高优先级'));
+    expect(prompt, contains('当前八轮对话为准'));
+    expect(prompt, isNot(contains('当前总结，不应')));
+    expect(prompt, isNot(contains('segmentIndex')));
   });
 
   test('omits optional sections that are too short and truncates long sections',

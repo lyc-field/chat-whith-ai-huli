@@ -10,6 +10,7 @@ void main() {
       roundEnd: 24,
       startMessageId: 'm17',
       endMessageId: 'm24',
+      manuallyEdited: true,
     );
 
     final restored = SegmentSummary.fromMap(summary.toMap());
@@ -18,6 +19,7 @@ void main() {
     expect(restored.roundEnd, 24);
     expect(restored.startMessageId, 'm17');
     expect(restored.endMessageId, 'm24');
+    expect(restored.manuallyEdited, isTrue);
   });
 
   test('old summary maps expose an eight-round fallback range', () {
@@ -28,5 +30,17 @@ void main() {
 
     expect(summary.effectiveRoundStart, 9);
     expect(summary.effectiveRoundEnd, 16);
+  });
+
+  test('old persisted summaries default to not manually edited', () {
+    final summary = SegmentSummary.fromMap({
+      'id': 'legacy',
+      'conversation_id': 'c1',
+      'content': 'legacy content',
+      'segment_index': 0,
+      'created_at': DateTime(2026, 1, 1).toIso8601String(),
+    });
+
+    expect(summary.manuallyEdited, isFalse);
   });
 }

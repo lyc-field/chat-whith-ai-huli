@@ -17,6 +17,34 @@ class ChatMemoryService {
     return active.take(count).toList();
   }
 
+  /// Selects whole conversation rounds by counting user messages, not raw
+  /// message rows. Assistant continuations remain attached to their round.
+  static List<Message> selectArchiveRounds(
+    List<Message> messages, {
+    required int roundCount,
+  }) {
+    if (roundCount <= 0) return const [];
+    final active = messages
+        .where((message) =>
+            message.content.trim().isNotEmpty && message.segmentIndex == null)
+        .toList();
+    final selected = <Message>[];
+    var selectedRounds = 0;
+    for (final message in active) {
+      if (message.role == 'user' && selectedRounds >= roundCount) break;
+      selected.add(message);
+      if (message.role == 'user') selectedRounds++;
+    }
+    return selected;
+  }
+
+  static int countUserRounds(Iterable<Message> messages) {
+    return messages
+        .where((message) =>
+            message.role == 'user' && message.content.trim().isNotEmpty)
+        .length;
+  }
+
   static String formatArchiveText(Iterable<Message> messages) {
     return messages
         .map((message) =>
@@ -130,16 +158,56 @@ class ChatMemoryService {
   }
 
   static bool isValidDiarySummary(String raw) {
-    return parseDiarySummary(raw).length >= 2;
+    final object = JsonUtils.extractJson(raw);
+    if (object == null) return false;
+    if (object.isEmpty) return true;
+    return object.keys.any(_diaryKeys.contains) ||
+        object.keys.any(_diaryLabels.containsKey);
   }
 
   static String normalizeDiarySummary(String raw) {
     final sections = parseDiarySummary(raw);
-    if (sections.isEmpty) return raw.trim();
+    if (sections.isEmpty) return '';
     return _diaryKeys
         .where(sections.containsKey)
         .map((key) => '${_diaryLabels[key]}：${sections[key]}')
         .join('\n\n');
+  }
+
+  /// Returns the two immediately preceding summaries in chronological order.
+  /// Manual edits don't change the selection window, but are explicitly marked
+  /// as user-confirmed within that window.
+  static List<SegmentSummary> selectSummaryReferences(
+    List<SegmentSummary> summaries, {
+    required int beforeSegmentIndex,
+    int limit = 2,
+  }) {
+    final preceding = summaries
+        .where((summary) => summary.segmentIndex < beforeSegmentIndex)
+        .toList()
+      ..sort((a, b) => b.segmentIndex.compareTo(a.segmentIndex));
+    final selected = preceding.take(limit).toList()
+      ..sort((a, b) => a.segmentIndex.compareTo(b.segmentIndex));
+    return selected;
+  }
+
+  static String formatSummaryReferences(
+    List<SegmentSummary> references,
+  ) {
+    if (references.isEmpty) return '';
+    final entries = references
+        .where((summary) => summary.content.trim().isNotEmpty)
+        .map((summary) {
+      final status =
+          summary.manuallyEdited ? '【用户手动确认，最高优先级参考】' : '【AI 旧总结，仅供参考】';
+      return '$status ${summary.content.trim()}';
+    }).toList();
+    if (entries.isEmpty) return '';
+    return [
+      '最近两条总结参考（只作为背景，不要照抄）：',
+      ...entries,
+      '旧总结仅供参考，当前八轮对话为准；若与当前原始对话冲突，以当前内容为准，绝不修改旧总结。仍然重要的旧事实可简短延续，不要重复过多；若角色自然察觉到明显矛盾，可以在关系或计划内容中向用户确认。',
+    ].join('\n');
   }
 
   static String _cleanDiaryText(String value) {

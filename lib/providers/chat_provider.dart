@@ -22,10 +22,9 @@ import 'conversation_provider.dart';
 import 'persona_provider.dart';
 
 class ChatProvider extends ChangeNotifier {
-  // Memory thresholds: 20 rounds (40 msgs) max, archive 8 rounds (16 msgs) at a time
+  // Keep up to 20 rounds in active context and archive complete 8-user-message rounds.
   static const maxActiveMessages = 40;
-  static const triggerArchiveAt = 40;
-  static const archiveCount = 16;
+  static const archiveRoundCount = 8;
   ConversationProvider _convProvider;
   final PersonaProvider? _personaProvider;
   DeepSeekService? _service; // chat model
@@ -719,7 +718,8 @@ class ChatProvider extends ChangeNotifier {
   Future<void> updateSegmentSummary(int segmentIndex, String content) async {
     final idx = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
     if (idx == -1) return;
-    final updated = _segments[idx].copyWith(content: content.trim());
+    final updated =
+        _segments[idx].copyWith(content: content.trim(), manuallyEdited: true);
     _segments[idx] = updated;
     await DatabaseService.updateSegmentSummary(updated);
     _pendingSummaryIndex = null;
@@ -729,6 +729,7 @@ class ChatProvider extends ChangeNotifier {
   Future<String?> _generateDiarySummary({
     required String archiveText,
     required String? persona,
+    required List<SegmentSummary> referenceSummaries,
   }) async {
     final service = _service;
     if (service == null) return null;
@@ -737,23 +738,32 @@ class ChatProvider extends ChangeNotifier {
         : '$persona\n\n请用角色本人的自然语气整理记忆，保持性格、语气和第一人称，不要编造对话中没有发生的内容。';
     const contract = '''
 只输出一个 JSON 对象，不要 Markdown、代码围栏或解释文字。
-可选字段：plot、events、relation、next；不适用的字段直接省略，不要填空字符串。
+可选字段：plot、events、relation、next；没有明显进展或不足 20 字的字段直接省略，可输出 0 到 4 个字段。
 plot 是剧情发展，events 是值得长期记住的事实/约定，relation 是角色对用户的关系与心情，next 是已经形成的下一步安排。
-至少输出两个有内容的字段，最多四个；不要把同一信息重复到多个字段。
-每个字段都是角色口吻的自然段，20-120 个字，禁止换行。
+每个字段都是角色口吻的自然段，20-120 个字，禁止换行。不要为凑字段编造内容，也不要在多个字段重复同一件事。
+最终展示顺序固定为剧情总结、事件记忆、对用户的关系和心情、待会要做什么；缺少的字段省略。
 ''';
-    final prompt = '$contract\n对话内容：\n$archiveText';
+    final referenceText =
+        ChatMemoryService.formatSummaryReferences(referenceSummaries);
+    final prompt = [
+      contract,
+      if (referenceText.isNotEmpty) referenceText,
+      '以下是当前八轮的原始对话，优先级高于任何旧总结：\n$archiveText',
+    ].join('\n\n');
 
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final retryHint =
-            attempt == 0 ? '' : '\n上一版格式不合格，请重新按 JSON 合同输出至少两个有效字段。';
+        final retryHint = attempt == 0
+            ? ''
+            : '\n上一版格式不合格，请重新输出合法 JSON；只保留有实际进展且不少于 20 字的字段，没有内容的字段省略。';
         final result = await service.chatRaw(
           '$prompt$retryHint',
           systemPrompt,
           maxTokens: 520,
         );
         if (ChatMemoryService.isValidDiarySummary(result)) {
+          // A valid JSON envelope with no useful sections is a valid empty
+          // summary; don't retry or force content into a section.
           return ChatMemoryService.normalizeDiarySummary(result);
         }
       } catch (e) {
@@ -786,9 +796,15 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
       final generated = await _generateDiarySummary(
         archiveText: archiveText,
         persona: persona,
+        referenceSummaries: ChatMemoryService.selectSummaryReferences(
+          _segments,
+          beforeSegmentIndex: segmentIndex,
+        ),
       );
-      if (generated == null || generated.isEmpty) return false;
-      final updated = summary.copyWith(content: generated);
+      if (_currentConvId != conversationId) return false;
+      if (generated == null) return false;
+      final updated =
+          summary.copyWith(content: generated, manuallyEdited: false);
       await DatabaseService.updateSegmentSummary(updated);
       final index = _segments.indexWhere((s) => s.segmentIndex == segmentIndex);
       if (index != -1) _segments[index] = updated;
@@ -1874,10 +1890,13 @@ JSON 示例：
       _messages,
       count: _messages.length,
     );
+    final availableRounds = ChatMemoryService.countUserRounds(unarchived);
+    if (availableRounds < archiveRoundCount) return;
 
-    if (unarchived.length < triggerArchiveAt) return;
-
-    final toArchive = unarchived.take(archiveCount).toList();
+    final toArchive = ChatMemoryService.selectArchiveRounds(
+      _messages,
+      roundCount: archiveRoundCount,
+    );
     final toArchiveIds = toArchive.map((m) => m.id).toList();
     final segmentIndex =
         _segments.isEmpty ? 0 : _segments.last.segmentIndex + 1;
@@ -1887,9 +1906,7 @@ JSON 示例：
             m.content.trim().isNotEmpty &&
             m.segmentIndex != null)
         .length;
-    final archivedRounds = toArchive
-        .where((m) => m.role == 'user' && m.content.trim().isNotEmpty)
-        .length;
+    final archivedRounds = ChatMemoryService.countUserRounds(toArchive);
     final roundStart = priorRounds + 1;
     final roundEnd = priorRounds + (archivedRounds == 0 ? 8 : archivedRounds);
 
@@ -1943,9 +1960,15 @@ JSON 示例：
         final generated = await _generateDiarySummary(
           archiveText: archiveText,
           persona: persona,
+          referenceSummaries: ChatMemoryService.selectSummaryReferences(
+            _segments,
+            beforeSegmentIndex: segmentIndex,
+          ),
         );
-        if (generated != null && generated.isNotEmpty) {
-          final updated = summary.copyWith(content: generated);
+        if (requestToken != null && !_isRequestCurrent(requestToken)) return;
+        if (generated != null) {
+          final updated =
+              summary.copyWith(content: generated, manuallyEdited: false);
           await DatabaseService.updateSegmentSummary(updated);
           if (requestToken != null && !_isRequestCurrent(requestToken)) return;
           final idx =

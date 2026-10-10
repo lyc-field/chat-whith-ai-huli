@@ -32,7 +32,7 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 22,
+        version: 23,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -50,7 +50,7 @@ class DatabaseService {
       try {
         await File(path).delete();
       } catch (_) {}
-      return await openDatabase(path, version: 22, onCreate: _onCreate);
+      return await openDatabase(path, version: 23, onCreate: _onCreate);
     }
   }
 
@@ -100,6 +100,7 @@ class DatabaseService {
         round_end INTEGER,
         start_message_id TEXT,
         end_message_id TEXT,
+        manually_edited INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       )
     ''');
@@ -485,6 +486,12 @@ class DatabaseService {
       try {
         await db.execute(
             'UPDATE ai_personas SET initial_affection = affection WHERE initial_affection = 30.0');
+      } catch (_) {}
+    }
+    if (oldVersion < 23) {
+      try {
+        await db.execute(
+            'ALTER TABLE segment_summaries ADD COLUMN manually_edited INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
     }
   }

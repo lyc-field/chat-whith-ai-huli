@@ -9,6 +9,7 @@ class SegmentSummary {
   final int? roundEnd;
   final String? startMessageId;
   final String? endMessageId;
+  final bool manuallyEdited;
   final DateTime createdAt;
 
   SegmentSummary({
@@ -20,6 +21,7 @@ class SegmentSummary {
     this.roundEnd,
     this.startMessageId,
     this.endMessageId,
+    this.manuallyEdited = false,
     DateTime? createdAt,
   })  : id = id ?? const Uuid().v4(),
         createdAt = createdAt ?? DateTime.now();
@@ -37,6 +39,7 @@ class SegmentSummary {
       'round_end': roundEnd,
       'start_message_id': startMessageId,
       'end_message_id': endMessageId,
+      'manually_edited': manuallyEdited ? 1 : 0,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -51,6 +54,7 @@ class SegmentSummary {
       roundEnd: (map['round_end'] as num?)?.toInt(),
       startMessageId: map['start_message_id'] as String?,
       endMessageId: map['end_message_id'] as String?,
+      manuallyEdited: (map['manually_edited'] as num?)?.toInt() == 1,
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }
@@ -61,6 +65,7 @@ class SegmentSummary {
     int? roundEnd,
     String? startMessageId,
     String? endMessageId,
+    bool? manuallyEdited,
   }) {
     return SegmentSummary(
       id: id,
@@ -71,6 +76,7 @@ class SegmentSummary {
       roundEnd: roundEnd ?? this.roundEnd,
       startMessageId: startMessageId ?? this.startMessageId,
       endMessageId: endMessageId ?? this.endMessageId,
+      manuallyEdited: manuallyEdited ?? this.manuallyEdited,
       createdAt: createdAt,
     );
   }
