@@ -62,3 +62,6 @@
 - 全量 `flutter test`：85 项通过；`dart analyze lib`：0 error。
 - 额外校验：合法空 JSON 会保存为空总结；仅含未知字段的 JSON 会触发一次格式重试。
 - 手动编辑状态从数据库 v23 起记录；旧总结因为历史数据中没有编辑标记，迁移时默认按普通旧总结处理。
+- 独立复查后补强：总结管理页编辑立即同步 ChatProvider 缓存；接受中文标题 JSON；最大生成 token 提升到 800；未完成的用户轮次不会计入归档；继续剧情的 AI 回复会关联回原归档 segment。
+- 最终验证：`flutter test` 86 项通过；`dart analyze lib` 0 error、13 条既有 info；`git diff --check` 通过。
+- 提交：`9e21f83`（规则和迁移）、`cbb258b`（缓存同步与归档边界）。
