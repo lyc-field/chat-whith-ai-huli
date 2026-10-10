@@ -4,6 +4,7 @@ class AffectionLog {
   final String? personaId;
   final double delta;
   final String reason;
+  final String detailedReason;
   final DateTime createdAt;
   final String userMessage;
   final String aiMessage;
@@ -14,6 +15,7 @@ class AffectionLog {
     this.personaId,
     required this.delta,
     required this.reason,
+    this.detailedReason = '',
     required this.createdAt,
     this.userMessage = '',
     this.aiMessage = '',
@@ -26,6 +28,7 @@ class AffectionLog {
       'persona_id': personaId,
       'delta': delta,
       'reason': reason,
+      'detailed_reason': detailedReason,
       'created_at': createdAt.toIso8601String(),
       'user_message': userMessage,
       'ai_message': aiMessage,
@@ -39,6 +42,7 @@ class AffectionLog {
       personaId: map['persona_id'] as String?,
       delta: (map['delta'] as num).toDouble(),
       reason: map['reason'] as String,
+      detailedReason: (map['detailed_reason'] as String?) ?? '',
       createdAt: DateTime.parse(map['created_at'] as String),
       userMessage: (map['user_message'] as String?) ?? '',
       aiMessage: (map['ai_message'] as String?) ?? '',

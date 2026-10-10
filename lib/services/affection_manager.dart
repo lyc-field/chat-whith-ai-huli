@@ -152,6 +152,7 @@ class AffectionManager {
   Future<void> applyDelta({
     required double delta,
     required String reason,
+    String detailedReason = '',
     required String convId,
     String? personaId,
     required String userMessage,
@@ -162,6 +163,12 @@ class AffectionManager {
     if (isRequestCurrent != null && !isRequestCurrent()) return;
     final targetState = emotionState;
     final normalizedReason = AffectionBatchService.normalizeReason(reason);
+    final normalizedDetailedReason = delta.abs() < 0.0001
+        ? ''
+        : AffectionBatchService.normalizeDetailedReason(
+            detailedReason,
+            normalizedReason,
+          );
     affection = (affection + delta).clamp(-15.0, 100.0);
     if (targetState != null) {
       targetState.affection = affection;
@@ -180,6 +187,7 @@ class AffectionManager {
         personaId: personaId,
         delta: delta,
         reason: normalizedReason,
+        detailedReason: normalizedDetailedReason,
         createdAt: DateTime.now(),
         userMessage: userMessage,
         aiMessage: aiMessage,

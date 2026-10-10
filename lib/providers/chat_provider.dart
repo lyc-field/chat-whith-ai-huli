@@ -635,22 +635,18 @@ class ChatProvider extends ChangeNotifier {
       }
     }
     if (userText == null) return;
-    final branchCutoff = _messages[aiMessageIndex].timestamp;
-
     // Re-generation rewinds the conversation from this response onward.
     // This keeps the new reply in its original narrative position and avoids
-    // leaving later turns attached to a discarded branch.
+    // leaving later turns attached to a discarded branch. Affection logs are
+    // intentionally not removed: they are historical snapshots of what
+    // happened before regeneration. The replacement reply starts a new
+    // calculation path from the current conversation state.
     final removedMessages =
         _messages.sublist(aiMessageIndex).toList(growable: false);
     _messages.removeRange(aiMessageIndex, _messages.length);
     for (final removed in removedMessages) {
       await DatabaseService.deleteMessage(removed.id);
     }
-    await DatabaseService.deleteLogsFrom(
-      _currentConvId!,
-      branchCutoff,
-      personaId: currentPersonaId,
-    );
     _affm.roundCount =
         _messages.where((message) => message.role == 'user').length;
     _quickReplies = [];
@@ -996,6 +992,7 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
 
     double? inlineDelta;
     String? inlineReason;
+    String? inlineDetailedReason;
 
     if (streamed != null && _isRequestCurrent(requestToken)) {
       var cleanContent = streamed.parsed.reply;
@@ -1053,6 +1050,7 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
         final judgement = await _judgeFourRoundAffection(requestToken);
         inlineDelta = judgement?.delta;
         inlineReason = judgement?.reason;
+        inlineDetailedReason = judgement?.detailedReason;
       }
 
       if (inlineDelta != null && !safeMode) {
@@ -1061,6 +1059,7 @@ plot 是剧情发展，events 是值得长期记住的事实/约定，relation �
         await _affm.applyDelta(
           delta: inlineDelta,
           reason: inlineReason ?? '',
+          detailedReason: inlineDetailedReason ?? '',
           convId: _currentConvId!,
           personaId: currentPersonaId,
           userMessage: userText,
