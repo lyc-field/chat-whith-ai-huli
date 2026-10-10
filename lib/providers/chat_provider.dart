@@ -1688,7 +1688,10 @@ JSON 示例：
           rawFragment += token;
           final appendedVisible =
               StructuredReplyParser.visibleText(rawFragment);
-          content = baseContent + appendedVisible;
+          content = StructuredReplyParser.joinContinuation(
+            baseContent,
+            appendedVisible,
+          );
           if (maxChars > 0) {
             content = _truncateByChars(content, maxChars);
           }
@@ -1707,7 +1710,7 @@ JSON 示例：
       final deltaTokens = usageTotal ?? estimatedUsage;
 
       content = _truncateByChars(
-        baseContent + appendedVisible,
+        StructuredReplyParser.joinContinuation(baseContent, appendedVisible),
         maxChars,
       );
       final idx = _messages.length - 1;

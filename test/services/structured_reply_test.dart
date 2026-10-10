@@ -75,4 +75,23 @@ void main() {
     expect(fallback.affectionDelta, closeTo(0.2, 0.001));
     expect(fallback.quickReplies, ['继续', '换话题']);
   });
+  test('restores literal escaped newlines inside structured replies', () {
+    final result = StructuredReplyParser.parseJson(
+      r'{"reply":"第一段\n\n第二段"}',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.reply, '第一段\n\n第二段');
+  });
+
+  test('separates continuation text from the existing paragraph', () {
+    expect(
+      StructuredReplyParser.joinContinuation('第一段。', '第二段。'),
+      '第一段。\n\n第二段。',
+    );
+    expect(
+      StructuredReplyParser.joinContinuation('第一段。\n', '第二段。'),
+      '第一段。\n第二段。',
+    );
+  });
 }

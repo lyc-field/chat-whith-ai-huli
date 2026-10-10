@@ -283,6 +283,10 @@ class ContextBuilder {
     for (int i = contextMsgs.length - 1; i >= 0; i--) {
       if (contextMsgs[i]['role'] == 'user') {
         contextMsgs[i]['content'] = '${contextMsgs[i]['content']}\n\n'
+            'Reply formatting requirement: preserve natural paragraph breaks in reply. '
+            'Use escaped JSON newlines (\\n) and blank lines (\\n\\n) between paragraphs; '
+            'do not compress multiple paragraphs into one line.\n';
+        contextMsgs[i]['content'] = '${contextMsgs[i]['content']}\n\n'
             '[结构化输出要求]\n'
             '只能输出一个合法 JSON 对象，禁止 Markdown、代码围栏、解释文字或 JSON 之外的前后缀。\n'
             '必填字段：reply（字符串，只放角色给用户看的正文）。\n'

@@ -52,9 +52,7 @@ class StructuredReplyParser {
 
     final deltaValue = object['affection_delta'];
     final delta = deltaValue is num
-        ? deltaValue
-            .toDouble()
-            .clamp(_minAffectionDelta, _maxAffectionDelta)
+        ? deltaValue.toDouble().clamp(_minAffectionDelta, _maxAffectionDelta)
         : null;
     final reason = object['affection_reason'] is String
         ? (object['affection_reason'] as String).trim()
@@ -67,7 +65,7 @@ class StructuredReplyParser {
       ..remove('quick_replies');
 
     return StructuredReply(
-      reply: replyValue.trim(),
+      reply: _normalizeReplyText(replyValue).trim(),
       affectionDelta: delta,
       affectionReason: reason,
       quickReplies: quickReplies,
@@ -82,7 +80,7 @@ class StructuredReplyParser {
 
     final partialReply = _extractPartialReply(raw);
     if (partialReply != null && partialReply.trim().isNotEmpty) {
-      return StructuredReply(reply: partialReply.trim());
+      return StructuredReply(reply: _normalizeReplyText(partialReply).trim());
     }
 
     var content = raw.trim();
@@ -113,7 +111,7 @@ class StructuredReplyParser {
     }
 
     return StructuredReply(
-      reply: _stripJsonNoise(content),
+      reply: _normalizeReplyText(_stripJsonNoise(content)),
       affectionDelta: delta,
       affectionReason: reason,
       quickReplies: quickReplies,
@@ -138,8 +136,8 @@ class StructuredReplyParser {
     final result = <String>[];
     for (final item in value) {
       if (item is! String) continue;
-      final clean = _truncate(item.replaceAll(RegExp(r'\s+'), ' ').trim(),
-          _maxQuickReplyChars);
+      final clean = _truncate(
+          item.replaceAll(RegExp(r'\s+'), ' ').trim(), _maxQuickReplyChars);
       if (clean.isNotEmpty) result.add(clean);
       if (result.length >= _maxQuickReplies) break;
     }
@@ -181,6 +179,25 @@ class StructuredReplyParser {
           .replaceAll(r'\t', '\t')
           .replaceAll(r'\\', r'\');
     }
+  }
+
+  /// Normalizes newline escape sequences that some models emit literally
+  /// inside the JSON string instead of as JSON escapes.
+  static String _normalizeReplyText(String value) {
+    return value
+        .replaceAll(r'\r\n', '\n')
+        .replaceAll(r'\n', '\n')
+        .replaceAll(r'\r', '\n');
+  }
+
+  /// Joins a continuation without gluing it to the previous paragraph.
+  static String joinContinuation(String base, String continuation) {
+    final left = base.replaceFirst(RegExp(r'[ \t]+$'), '');
+    final right = continuation.replaceFirst(RegExp(r'^[ \t]+'), '');
+    if (left.isEmpty) return right;
+    if (right.isEmpty) return left;
+    if (left.endsWith('\n')) return '$left$right';
+    return '$left\n\n$right';
   }
 
   static String _stripJsonNoise(String content) {
