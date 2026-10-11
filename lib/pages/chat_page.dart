@@ -24,7 +24,7 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
-enum _ItemType { message, divider, summary }
+enum _ItemType { message, divider }
 
 class _DisplayItem {
   final _ItemType type;
@@ -36,8 +36,6 @@ class _DisplayItem {
       _DisplayItem._(_ItemType.message, index, null);
   factory _DisplayItem.divider(SegmentSummary s) =>
       _DisplayItem._(_ItemType.divider, null, s);
-  factory _DisplayItem.summary(SegmentSummary s) =>
-      _DisplayItem._(_ItemType.summary, null, s);
 }
 
 class _ChatPageState extends State<ChatPage> {
@@ -108,18 +106,6 @@ class _ChatPageState extends State<ChatPage> {
     _scrollController.animateTo(
       0,
       duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-    );
-  }
-
-  void _scrollToIndex(int itemIndex, int totalItems) {
-    if (!_scrollController.hasClients) return;
-    final reverseIndex = (totalItems - 1 - itemIndex).clamp(0, totalItems - 1);
-    final offset = (reverseIndex * 90.0)
-        .clamp(0.0, _scrollController.position.maxScrollExtent);
-    _scrollController.animateTo(
-      offset,
-      duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
   }
@@ -288,10 +274,6 @@ class _ChatPageState extends State<ChatPage> {
       final msg = provider.messages[i];
 
       if (msg.segmentIndex != currentSegment) {
-        if (currentSegment != null) {
-          final seg = provider.getSegment(currentSegment);
-          if (seg != null) items.add(_DisplayItem.summary(seg));
-        }
         if (msg.segmentIndex != null) {
           final seg = provider.getSegment(msg.segmentIndex!);
           if (seg != null) items.add(_DisplayItem.divider(seg));
@@ -305,11 +287,6 @@ class _ChatPageState extends State<ChatPage> {
           _expandedSegments.contains(msg.segmentIndex)) {
         items.add(_DisplayItem.message(i));
       }
-    }
-
-    if (currentSegment != null) {
-      final seg = provider.getSegment(currentSegment);
-      if (seg != null) items.add(_DisplayItem.summary(seg));
     }
 
     _cachedItems = items;
@@ -791,22 +768,15 @@ class _ChatPageState extends State<ChatPage> {
         ),
         TextButton(
           onPressed: () {
-            final segIndex = provider.pendingSummaryIndex!;
             provider.acceptSummaryPrompt();
-            setState(() => _expandedSegments.add(segIndex));
-            // Find the divider position in display items and scroll there
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final items = _buildDisplayItems(provider);
-              int targetIdx = 0;
-              for (int i = 0; i < items.length; i++) {
-                if (items[i].summary?.segmentIndex == segIndex &&
-                    items[i].type == _ItemType.divider) {
-                  targetIdx = i;
-                  break;
-                }
-              }
-              _scrollToIndex(targetIdx, items.length);
-            });
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SummaryManagementPage(
+                  conversationId: provider.currentConvId!,
+                ),
+              ),
+            );
           },
           style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -933,8 +903,6 @@ class _ChatPageState extends State<ChatPage> {
             );
           case _ItemType.divider:
             return _buildSegmentDivider(provider, item.summary!);
-          case _ItemType.summary:
-            return _buildSummaryDisplay(provider, item.summary!);
         }
       },
     );
